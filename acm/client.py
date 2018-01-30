@@ -1,17 +1,22 @@
+import base64
+import hashlib
+import hmac
 import logging
-from urllib import request, error, parse
-from http import HTTPStatus
 import socket
-from inspect import getcallargs
-from threading import RLock, Thread
+import time
+from http import HTTPStatus
 from multiprocessing import Process, Manager, Queue, pool
-from .server import get_server_list
-from .params import check_params, group_key, parse_key
+from threading import RLock, Thread
+from urllib import request, error, parse
+
 from .commons import synchronized_with_attr
+from .params import group_key, parse_key, is_valid
+from .server import get_server_list
 
 logger = logging.getLogger("acm")
 
 DEBUG = True
+VERSION = "1.0"
 
 if DEBUG:
     handler = logging.StreamHandler()
@@ -21,6 +26,7 @@ if DEBUG:
 
 DEFAULT_TIMEOUT = 3  # in seconds
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
+DEFAULT_TENANT = "DEFAULT_TENANT"
 PULLING_CONFIG_SIZE = 3000
 CALLBACK_THREAD_NUM = 10
 
@@ -29,29 +35,26 @@ class ACMException(Exception):
     pass
 
 
-def process_common_params(func):
-    def func_wrapper(*args, **kwargs):
-        new_kwargs = (getcallargs(func, *args, **kwargs))
-        if "group" in new_kwargs:
-            group = DEFAULT_GROUP_NAME if not new_kwargs["group"] or new_kwargs["group"].strip() else new_kwargs[
-                "group"].strip()
-            new_kwargs["group"] = group
+def process_common_params(data_id, group):
+    if not group or not group.strip():
+        group = DEFAULT_GROUP_NAME
+    else:
+        group = group.strip()
 
-        if check_params(new_kwargs):
-            return func(**new_kwargs)
-        else:
-            logger.error("[%s] invalid param, params:%s" % (func.__name__, new_kwargs))
-            raise ACMException("Invalid params.")
+    if not data_id or not is_valid(data_id):
+        raise ACMException("Invalid dataId.")
 
-    return func_wrapper
+    if not is_valid(group):
+        raise ACMException("Invalid group.")
+    return data_id, group
 
 
 class ACMClient:
 
     def __init__(self, endpoint, namespace=None, ak=None, sk=None, default_timeout=DEFAULT_TIMEOUT,
-                 tls_enabled=False, auth_enabled=False, cai_enabled=True):
+                 tls_enabled=False, auth_enabled=True, cai_enabled=True):
         self.endpoint = endpoint
-        self.namespace = namespace or "DEFAULT_TANENT"
+        self.namespace = namespace or DEFAULT_TENANT
         self.ak = ak
         self.sk = sk
         self.default_timeout = default_timeout
@@ -85,8 +88,8 @@ class ACMClient:
         logger.info("[current-server] use server:%s, offset:%s" % (str(server), self.server_offset))
         return server
 
-    @process_common_params
     def get(self, data_id, group, timeout=None):
+        data_id, group = process_common_params(data_id, group)
         logger.info("[get-config] data_id:%s, group:%s, namespace:%s, timeout:%s" % (
             data_id, group, self.namespace, timeout))
 
@@ -98,9 +101,10 @@ class ACMClient:
 
         # todo get info from failover
 
-        url = "?".join(["/diamond-server/config.co", parse.urlencode(params)])
         try:
-            content = self._do_sync_req(url, "GET", dict(), None, timeout or self.default_timeout).content
+            resp = self._do_sync_req("/diamond-server/config.co", "GET", None, params, None,
+                                     timeout or self.default_timeout)
+            content = resp.read().decode("GBK")
             logger.info("[get-config] content from server:%s, data_id:%s, group:%s, namespace:%s" % (
                 content, data_id, group, self.namespace))
             # todo save snapshot
@@ -119,7 +123,7 @@ class ACMClient:
             elif e.code == HTTPStatus.FORBIDDEN:
                 logger.error("[get-config] no right for data_id:%s, group:%s, namespace:%s" % (
                     data_id, group, self.namespace))
-                raise ACMException("Insufficient privilege.")
+                raise ACMException("Insufficient privilege.") from None
             else:
                 logger.error("[get-config] error code [:%s] for data_id:%s, group:%s, namespace:%s" % (
                     e.code, data_id, group, self.namespace))
@@ -132,11 +136,11 @@ class ACMClient:
         # todo get from snapshot
         return None
 
-    # @process_common_params
     @synchronized_with_attr("pulling_lock")
     def add_watcher(self, data_id, group, cb):
         if not cb:
             raise ACMException("A callback function is needed.")
+        data_id, group = process_common_params(data_id, group)
         logger.info("[add-watcher] data_id:%s, group:%s, namespace:%s" % (data_id, group, self.namespace))
         cache_key = group_key(data_id, group, self.namespace)
         wl = self.watcher_mapping.get(cache_key)
@@ -169,11 +173,11 @@ class ACMClient:
             puller.start()
             self.puller_mapping[cache_key] = (puller, key_list)
 
-    @process_common_params
     @synchronized_with_attr("pulling_lock")
     def remove_watcher(self, data_id, group, cb):
         if not cb:
             raise ACMException("A callback function is needed.")
+        data_id, group = process_common_params(data_id, group)
         if not self.puller_mapping:
             logger.warning("[remove-watcher] watcher is never started.")
             return
@@ -194,16 +198,20 @@ class ACMClient:
                 self.puller_mapping.pop(cache_key)
                 puller_info[0].stop()
 
-    def _do_sync_req(self, url, method, headers, data, timeout):
+    def _do_sync_req(self, url, method, headers=None, params=None, data=None, timeout=None):
         logger.debug(
-            "[do-sync-req] method:%s, url:%s, headers:%s, data:%s, timeout:%s" % (method, url, headers, data, timeout))
-        # todo add auth
+            "[do-sync-req] method:%s, url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (
+                method, url, headers, params, data, timeout))
+        url = "?".join([url, parse.urlencode(params)])
+        all_headers = self._get_common_headers(params)
+        if headers:
+            all_headers.update(headers)
         tries = 0
         while True:
             try:
                 server = self.current_server()
                 server_url = "%s://%s:%s" % ("https" if self.tls_enabled else "http", server[0], server[1])
-                req = request.Request(url=server_url + url, data=data, headers=headers, method=method)
+                req = request.Request(url=server_url + url, data=data, headers=all_headers, method=method)
                 resp = request.urlopen(req, timeout=timeout)
                 logger.debug("[do-sync-req] info from server:%s" % str(server))
                 return resp
@@ -231,7 +239,6 @@ class ACMClient:
             # todo do post request
             changed_keys = list()
             for k in changed_keys:
-                # todo get server config
                 data_id, group, namespace = parse_key(k)
                 content = self.get(data_id, group)
                 queue.put((k, content))
@@ -253,12 +260,11 @@ class ACMClient:
     def _process_change_event(self):
         while True:
             info = self.notify_queue.get()
-            logger.debug("[process-change-event] receive a message:%s" % str(info))
+            logger.debug("[process-change-event] receive an event:%s" % str(info))
             wl = self.watcher_mapping.get(info[0])
             if not wl:
                 logger.warning("[process-change-event] no watcher on %s, ignored" % info[0])
                 continue
-            # todo update local cache
             data_id, group, namespace = parse_key(info[0])
             params = {
                 "data_id": data_id,
@@ -268,3 +274,23 @@ class ACMClient:
             }
             for watcher in wl:
                 self.callback_tread_pool.apply(watcher, (params,))
+
+    def _get_common_headers(self, params):
+        ts = str(int(time.time() * 1000))
+
+        headers = {
+            "Client-Version": VERSION,
+            "Content-Type": "application/x-www-form-urlencoded; charset=GBK",
+            "exConfigInfo": "true",
+        }
+
+        if self.auth_enabled:
+            sign_str = "+".join([params["tenant"], params["group"], ts])
+            headers.update({
+                "Spas-AccessKey": self.ak,
+                "timeStamp": ts,
+                'Spas-Signature': base64.encodebytes(
+                    hmac.new(self.sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip(),
+            })
+
+        return headers
