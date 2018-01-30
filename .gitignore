@@ -1,0 +1,4 @@
+#ignore list
+.idea
+*.iml
+*.pyc
