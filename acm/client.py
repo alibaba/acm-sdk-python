@@ -9,9 +9,10 @@ from multiprocessing import Process, Manager, Queue, pool
 from threading import RLock, Thread
 from urllib import request, error, parse
 
-from .commons import synchronized_with_attr
+from .commons import synchronized_with_attr, truncate
 from .params import group_key, parse_key, is_valid
 from .server import get_server_list
+from .files import read_file, save_file, delete_file
 
 logger = logging.getLogger("acm")
 
@@ -24,11 +25,19 @@ if DEBUG:
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
 
-DEFAULT_TIMEOUT = 3  # in seconds
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
-DEFAULT_TENANT = "DEFAULT_TENANT"
-PULLING_CONFIG_SIZE = 3000
-CALLBACK_THREAD_NUM = 10
+WORD_SEPARATOR = bytes([2]).decode()
+LINE_SEPARATOR = bytes([1]).decode()
+
+DEFAULTS = {
+    "TIMEOUT": 3,  # in seconds
+    "GROUP": "DEFAULT_GROUP",
+    "NAMESPACE": "DEFAULT_TENANT",
+    "PULLING_CONFIG_SIZE": 3000,
+    "CALLBACK_THREAD_NUM": 10,
+    "FAILOVER_BASE": "acm-data/data",
+    "SNAPSHOT_BASE": "acm-data/snapshot"
+}
 
 
 class ACMException(Exception):
@@ -49,17 +58,41 @@ def process_common_params(data_id, group):
     return data_id, group
 
 
+def parse_pulling_result(result):
+    if not result:
+        return list()
+    return [i.split(WORD_SEPARATOR) for i in parse.unquote(result.decode(), "utf8").split(LINE_SEPARATOR) if i.strip()]
+
+
+class WatcherWrap:
+    def __init__(self, key, callback):
+        self.callback = callback
+        self.last_md5 = None
+        self.watch_key = key
+
+
+class CacheData:
+    def __init__(self, key, client):
+        self.key = key
+        local_value = read_file(client.failover_base, key) or read_file(client.snapshot_base, key)
+        self.md5 = hashlib.md5(local_value.encode()).hexdigest() if local_value else None
+        self.is_init = True
+        if not self.md5:
+            logger.debug("[init-cache] cache for %s does not have local value" % key)
+
+
 class ACMClient:
 
-    def __init__(self, endpoint, namespace=None, ak=None, sk=None, default_timeout=DEFAULT_TIMEOUT,
-                 tls_enabled=False, auth_enabled=True, cai_enabled=True):
+    def __init__(self, endpoint, namespace=None, ak=None, sk=None, default_timeout=None,
+                 tls_enabled=False, auth_enabled=True, cai_enabled=True, pulling_config_size=None,
+                 callback_thread_num=None, failover_base=None, snapshot_base=None):
         self.endpoint = endpoint
-        self.namespace = namespace or DEFAULT_TENANT
+        self.namespace = namespace or DEFAULTS["NAMESPACE"]
         self.ak = ak
         self.sk = sk
-        self.default_timeout = default_timeout
+        self.default_timeout = default_timeout or DEFAULTS["TIMEOUT"]
         self.tls_enabled = tls_enabled
-        self.auth_enabled = auth_enabled
+        self.auth_enabled = auth_enabled and self.ak and self.sk
         self.cai_enabled = cai_enabled
         self.server_list = list()
         self.server_offset = 0
@@ -69,10 +102,14 @@ class ACMClient:
         self.notify_queue = None
         self.callback_tread_pool = None
         self.process_mgr = None
+        self.pulling_config_size = pulling_config_size or DEFAULTS["PULLING_CONFIG_SIZE"]
+        self.callback_tread_num = callback_thread_num or DEFAULTS["CALLBACK_THREAD_NUM"]
+        self.failover_base = failover_base or DEFAULTS["FAILOVER_BASE"]
+        self.snapshot_base = snapshot_base or DEFAULTS["SNAPSHOT_BASE"]
 
         logger.info(
-            "[client-init] endpoint:%s, tenant:%s, default_timeout:%s, tls_enabled:%s, auth_enabled:%s, "
-            "cai_enabled:%s" % (endpoint, namespace, default_timeout, tls_enabled, auth_enabled, cai_enabled))
+            "[client-init] endpoint:%s, tenant:%s, tls_enabled:%s, auth_enabled:%s, "
+            "cai_enabled:%s" % (endpoint, namespace, tls_enabled, auth_enabled, cai_enabled))
 
     def current_server(self):
         if not self.server_list:
@@ -99,21 +136,29 @@ class ACMClient:
             "tenant": self.namespace
         }
 
-        # todo get info from failover
+        cache_key = group_key(data_id, group, self.namespace)
+        # get from failover
+        content = read_file(self.failover_base, cache_key)
+        if content is None:
+            logger.debug("[get-config] failover config is not exist for %s, try to get from server" % cache_key)
+        else:
+            logger.debug("[get-config] get %s from failover directory, content is %s" % (cache_key, truncate(content)))
+            return content
 
+        # get from server
         try:
             resp = self._do_sync_req("/diamond-server/config.co", "GET", None, params, None,
                                      timeout or self.default_timeout)
             content = resp.read().decode("GBK")
             logger.info("[get-config] content from server:%s, data_id:%s, group:%s, namespace:%s" % (
-                content, data_id, group, self.namespace))
-            # todo save snapshot
+                truncate(content), data_id, group, self.namespace))
+            save_file(self.snapshot_base, cache_key, content)
             return content
         except error.HTTPError as e:
             if e.code == HTTPStatus.NOT_FOUND:
                 logger.warning("[get-config] config not found for data_id:%s, group:%s, namespace:%s" % (
                     data_id, group, self.namespace))
-                # todo save snapshot
+                delete_file(self.snapshot_base, cache_key)
                 return None
             elif e.code == HTTPStatus.CONFLICT:
                 logger.error(
@@ -133,8 +178,9 @@ class ACMClient:
                 data_id, group, self.namespace))
             # raise ACMException("Unknown exception.")
 
-        # todo get from snapshot
-        return None
+        logger.error("[get-config] get config from server failed, try snapshot, data_id:%s, group:%s, namespace:%s" % (
+            data_id, group, self.namespace))
+        return read_file(self.snapshot_base, cache_key)
 
     @synchronized_with_attr("pulling_lock")
     def add_watcher(self, data_id, group, cb):
@@ -147,7 +193,7 @@ class ACMClient:
         if not wl:
             wl = list()
             self.watcher_mapping[cache_key] = wl
-        wl.append(cb)
+        wl.append(WatcherWrap(cache_key, cb))
         logger.info("[add-watcher] watcher has been added for key:%s, new callback is:%s, callback number is:%s" % (
             cache_key, cb.__name__, len(wl)))
 
@@ -160,7 +206,7 @@ class ACMClient:
             return
 
         for key, puller_info in self.puller_mapping.items():
-            if len(puller_info[1]) < PULLING_CONFIG_SIZE:
+            if len(puller_info[1]) < self.pulling_config_size:
                 logger.debug("[add-watcher] puller:%s is available, add key:%s" % (puller_info[0], cache_key))
                 puller_info[1].append(key)
                 self.puller_mapping[cache_key] = puller_info
@@ -168,6 +214,7 @@ class ACMClient:
         else:
             logger.debug("[add-watcher] no puller available, new one and add key:%s" % cache_key)
             key_list = self.process_mgr.list()
+            key_list.append(cache_key)
             puller = Process(target=self._do_pulling, args=(key_list, self.notify_queue))
             puller.daemon = True
             puller.start()
@@ -186,7 +233,9 @@ class ACMClient:
         if not wl:
             logger.warning("[remove-watcher] there is no watcher on key:%s" % cache_key)
             return
-        wl.remove(cb)
+        for i in wl:
+            if i.callback == cb:
+                wl.remove(i)
         logger.info("[remove-watcher] callback:%s is removed from key:%s" % (cb.__name__, cache_key))
         if not wl:
             logger.debug("[remove-watcher] there is no watcher for:%s, kick out from pulling" % cache_key)
@@ -199,13 +248,13 @@ class ACMClient:
                 puller_info[0].stop()
 
     def _do_sync_req(self, url, method, headers=None, params=None, data=None, timeout=None):
-        logger.debug(
-            "[do-sync-req] method:%s, url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (
-                method, url, headers, params, data, timeout))
-        url = "?".join([url, parse.urlencode(params)])
+        url = "?".join([url, parse.urlencode(params)]) if params else url
         all_headers = self._get_common_headers(params)
         if headers:
             all_headers.update(headers)
+        logger.debug(
+            "[do-sync-req] method:%s, url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (
+                method, url, all_headers, params, data, timeout))
         tries = 0
         while True:
             try:
@@ -224,7 +273,7 @@ class ACMClient:
             except socket.timeout:
                 logger.warning("[do-sync-req] server:%s request timeout" % (str(server)))
             except error.URLError as e:
-                logger.warning("[do-sync-req] server:%s connection error:%s" % (str(server), e.msg))
+                logger.warning("[do-sync-req] server:%s connection error:%s" % (str(server), e.reason))
 
             tries += 1
             if tries == len(self.server_list):
@@ -234,14 +283,50 @@ class ACMClient:
             logger.warning("[do-sync-req] server:%s maybe down, skip to next" % str(server))
 
     def _do_pulling(self, cache_list, queue):
+        cache_pool = dict()
+        for cache_key in cache_list:
+            cache_pool[cache_key] = CacheData(cache_key, self)
+
         while cache_list:
-            # todo get local md5
-            # todo do post request
-            changed_keys = list()
-            for k in changed_keys:
-                data_id, group, namespace = parse_key(k)
+            unused_keys = set(cache_pool.keys())
+            contains_init_key = False
+            probe_update_string = ""
+            for cache_key in cache_list:
+                cache_data = cache_pool.get(cache_key)
+                if not cache_data:
+                    logger.debug("[do-pulling] new key added: %s" % cache_key)
+                    cache_data = CacheData(cache_key, self)
+                    cache_pool[cache_key] = cache_data
+                if cache_data.is_init:
+                    contains_init_key = True
+                data_id, group, namespace = parse_key(cache_key)
+                probe_update_string += WORD_SEPARATOR.join(
+                    [data_id, group, cache_data.md5 or "", self.namespace]) + LINE_SEPARATOR
+                unused_keys.remove(cache_key)
+            for k in unused_keys:
+                logger.debug("[do-pulling] %s is no longer watched, remove from cache" % k)
+                cache_pool.pop(k)
+
+            logger.debug(
+                "[do-pulling] try to detected change from server probe string is %s" % truncate(probe_update_string))
+            headers = {"longPullingTimeout": "30000"}
+            if contains_init_key:
+                headers["longPullingNoHangUp"] = "true"
+
+            data = parse.urlencode({"Probe-Modify-Request": probe_update_string}).encode()
+            # todo handle error
+            resp = self._do_sync_req("/diamond-server/config.co", "POST", headers, None, data
+                                     , 30000)
+            for cache_key, cache_data in cache_pool.items():
+                cache_data.is_init = False
+
+            changed_keys = parse_pulling_result(resp.read())
+
+            for data_id, group, namespace in changed_keys:
                 content = self.get(data_id, group)
-                queue.put((k, content))
+                cache_key = group_key(data_id, group, namespace)
+                cache_pool[cache_key].md5 = hashlib.md5(content.encode()).hexdigest()
+                queue.put((cache_key, content))
 
     @synchronized_with_attr("pulling_lock")
     def _int_pulling(self):
@@ -250,7 +335,7 @@ class ACMClient:
             return
         self.puller_mapping = dict()
         self.notify_queue = Queue()
-        self.callback_tread_pool = pool.ThreadPool(CALLBACK_THREAD_NUM)
+        self.callback_tread_pool = pool.ThreadPool(self.callback_tread_num)
         self.process_mgr = Manager()
         t = Thread(target=self._process_change_event)
         t.setDaemon(True)
@@ -259,38 +344,53 @@ class ACMClient:
 
     def _process_change_event(self):
         while True:
-            info = self.notify_queue.get()
-            logger.debug("[process-change-event] receive an event:%s" % str(info))
-            wl = self.watcher_mapping.get(info[0])
+            cache_key, content = self.notify_queue.get()
+            logger.debug("[process-change-event] receive an event:%s" % cache_key)
+            wl = self.watcher_mapping.get(cache_key)
             if not wl:
-                logger.warning("[process-change-event] no watcher on %s, ignored" % info[0])
+                logger.warning("[process-change-event] no watcher on %s, ignored" % cache_key)
                 continue
-            data_id, group, namespace = parse_key(info[0])
+
+            data_id, group, namespace = parse_key(cache_key)
             params = {
                 "data_id": data_id,
                 "group": group,
                 "namespace": namespace,
-                "content": info[1]
+                "content": content
             }
+            md5 = hashlib.md5(content.encode()).hexdigest()
             for watcher in wl:
-                self.callback_tread_pool.apply(watcher, (params,))
+                if not watcher.last_md5 == md5:
+                    # todo error handle
+                    logger.debug(
+                        "[process-change-event] md5 has changed since last call, calling %s" % watcher.callback.__name__)
+                    self.callback_tread_pool.apply(watcher.callback, (params,))
+                    watcher.last_md5 = md5
 
     def _get_common_headers(self, params):
-        ts = str(int(time.time() * 1000))
-
+        # todo add client identification info
         headers = {
-            "Client-Version": VERSION,
+            "Client-Version": "3.8.6",
             "Content-Type": "application/x-www-form-urlencoded; charset=GBK",
             "exConfigInfo": "true",
         }
-
         if self.auth_enabled:
-            sign_str = "+".join([params["tenant"], params["group"], ts])
+            ts = str(int(time.time() * 1000))
             headers.update({
                 "Spas-AccessKey": self.ak,
                 "timeStamp": ts,
-                'Spas-Signature': base64.encodebytes(
-                    hmac.new(self.sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip(),
             })
+            sign_str = ""
+            # in case tenant or group is null
+            if not params:
+                return headers
 
+            if "tenant" in params:
+                sign_str = params["tenant"] + "+"
+            if "group" in params:
+                sign_str = sign_str + params["group"] + "+"
+            if sign_str:
+                sign_str += ts
+                headers["Spas-Signature"] = base64.encodebytes(
+                    hmac.new(self.sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip()
         return headers
