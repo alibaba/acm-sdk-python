@@ -7,7 +7,7 @@ setup(
     url='',
     license='',
     author='zhouwenb',
-    author_email='owen.zw@alibaba-inc.com',
+    author_email='755063194@qq.com',
     description='Python client for ACM.',
     install_requires=[],
 )
