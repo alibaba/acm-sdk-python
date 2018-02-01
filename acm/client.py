@@ -4,10 +4,23 @@ import hmac
 import logging
 import socket
 import time
-from http import HTTPStatus
+import ssl
+
 from multiprocessing import Process, Manager, Queue, pool
 from threading import RLock, Thread
-from urllib import request, error, parse
+
+try:
+    # python3.6
+    from http import HTTPStatus
+    from urllib.request import Request, urlopen
+    from urllib.parse import urlencode, unquote_plus
+    from urllib.error import HTTPError, URLError
+except ImportError:
+    # python2.7
+    import httplib as HTTPStatus
+    from urllib2 import Request, urlopen, HTTPError, URLError
+    from urllib import urlencode, unquote_plus
+    base64.encodebytes = base64.encodestring
 
 from .commons import synchronized_with_attr, truncate
 from .params import group_key, parse_key, is_valid
@@ -30,9 +43,11 @@ WORD_SEPARATOR = bytes([2]).decode()
 LINE_SEPARATOR = bytes([1]).decode()
 
 DEFAULTS = {
+    "APP_NAME": "ACM-SDK-Python",
     "TIMEOUT": 3,  # in seconds
     "GROUP": "DEFAULT_GROUP",
     "NAMESPACE": "DEFAULT_TENANT",
+    "PULLING_TIMEOUT": 30,  # in seconds
     "PULLING_CONFIG_SIZE": 3000,
     "CALLBACK_THREAD_NUM": 10,
     "FAILOVER_BASE": "acm-data/data",
@@ -61,7 +76,7 @@ def process_common_params(data_id, group):
 def parse_pulling_result(result):
     if not result:
         return list()
-    return [i.split(WORD_SEPARATOR) for i in parse.unquote(result.decode(), "utf8").split(LINE_SEPARATOR) if i.strip()]
+    return [i.split(WORD_SEPARATOR) for i in unquote_plus(result.decode(), "utf8").split(LINE_SEPARATOR) if i.strip()]
 
 
 class WatcherWrap:
@@ -82,10 +97,17 @@ class CacheData:
 
 
 class ACMClient:
+    """Client for ACM
+
+    available API:
+    * get
+    * add_watcher
+    * remove_watcher
+    """
 
     def __init__(self, endpoint, namespace=None, ak=None, sk=None, default_timeout=None,
-                 tls_enabled=False, auth_enabled=True, cai_enabled=True, pulling_config_size=None,
-                 callback_thread_num=None, failover_base=None, snapshot_base=None):
+                 tls_enabled=False, auth_enabled=True, cai_enabled=True, pulling_timeout=None, pulling_config_size=None,
+                 callback_thread_num=None, failover_base=None, snapshot_base=None, app_name=None):
         self.endpoint = endpoint
         self.namespace = namespace or DEFAULTS["NAMESPACE"]
         self.ak = ak
@@ -102,10 +124,12 @@ class ACMClient:
         self.notify_queue = None
         self.callback_tread_pool = None
         self.process_mgr = None
+        self.pulling_timeout = pulling_timeout or DEFAULTS["PULLING_TIMEOUT"]
         self.pulling_config_size = pulling_config_size or DEFAULTS["PULLING_CONFIG_SIZE"]
         self.callback_tread_num = callback_thread_num or DEFAULTS["CALLBACK_THREAD_NUM"]
         self.failover_base = failover_base or DEFAULTS["FAILOVER_BASE"]
         self.snapshot_base = snapshot_base or DEFAULTS["SNAPSHOT_BASE"]
+        self.app_name = app_name or DEFAULTS["APP_NAME"]
 
         logger.info(
             "[client-init] endpoint:%s, tenant:%s, tls_enabled:%s, auth_enabled:%s, "
@@ -126,6 +150,23 @@ class ACMClient:
         return server
 
     def get(self, data_id, group, timeout=None):
+        """Get value of one config item.
+
+        query priority:
+        1.  get from local failover dir(default: "{cwd}/acm/data")
+            failover dir can be manually copied from snapshot dir(default: "{cwd}/acm/snapshot") in advance
+            this helps to suppress the effect of known server failure
+
+        2.  get from one server until value is got or all servers tried
+            content will be save to snapshot dir
+
+        3.  get from snapshot dir
+
+        :param data_id: dataId
+        :param group: group, use "DEFAULT_GROUP" if no group specified
+        :param timeout: timeout for requesting server in seconds
+        :return: value
+        """
         data_id, group = process_common_params(data_id, group)
         logger.info("[get-config] data_id:%s, group:%s, namespace:%s, timeout:%s" % (
             data_id, group, self.namespace, timeout))
@@ -147,36 +188,35 @@ class ACMClient:
 
         # get from server
         try:
-            resp = self._do_sync_req("/diamond-server/config.co", "GET", None, params, None,
-                                     timeout or self.default_timeout)
+            resp = self._do_sync_req("/diamond-server/config.co", None, params, None, timeout or self.default_timeout)
             content = resp.read().decode("GBK")
-            logger.info("[get-config] content from server:%s, data_id:%s, group:%s, namespace:%s" % (
-                truncate(content), data_id, group, self.namespace))
+            logger.info(
+                "[get-config] content from server:%s, data_id:%s, group:%s, namespace:%s, try to save snapshot" % (
+                    truncate(content), data_id, group, self.namespace))
             save_file(self.snapshot_base, cache_key, content)
             return content
-        except error.HTTPError as e:
+        except HTTPError as e:
             if e.code == HTTPStatus.NOT_FOUND:
-                logger.warning("[get-config] config not found for data_id:%s, group:%s, namespace:%s" % (
-                    data_id, group, self.namespace))
+                logger.warning(
+                    "[get-config] config not found for data_id:%s, group:%s, namespace:%s, try to delete snapshot" % (
+                        data_id, group, self.namespace))
                 delete_file(self.snapshot_base, cache_key)
                 return None
             elif e.code == HTTPStatus.CONFLICT:
                 logger.error(
                     "[get-config] config being modified concurrently for data_id:%s, group:%s, namespace:%s" % (
                         data_id, group, self.namespace))
-                # raise ACMException("Conflict read-write detected.")
             elif e.code == HTTPStatus.FORBIDDEN:
                 logger.error("[get-config] no right for data_id:%s, group:%s, namespace:%s" % (
                     data_id, group, self.namespace))
-                raise ACMException("Insufficient privilege.") from None
+                raise ACMException("Insufficient privilege.")
             else:
                 logger.error("[get-config] error code [:%s] for data_id:%s, group:%s, namespace:%s" % (
                     e.code, data_id, group, self.namespace))
-                # raise ACMException("Exception %s." % e.msg)
-        except OSError:
-            logger.exception("[get-config] unknown exception data_id:%s, group:%s, namespace:%s" % (
-                data_id, group, self.namespace))
-            # raise ACMException("Unknown exception.")
+        except ACMException as e:
+            logger.error("[get-config] acm exception: %s" % str(e))
+        except Exception as e:
+            logger.exception("[get-config] exception %s occur" % str(e))
 
         logger.error("[get-config] get config from server failed, try snapshot, data_id:%s, group:%s, namespace:%s" % (
             data_id, group, self.namespace))
@@ -184,6 +224,17 @@ class ACMClient:
 
     @synchronized_with_attr("pulling_lock")
     def add_watcher(self, data_id, group, cb):
+        """Add a watcher to specified item.
+
+        1.  callback is invoked from current process concurrently by thread pool
+        2.  callback is invoked at once if the item exists
+        3.  callback is invoked if changes or deletion detected on the item
+
+        :param data_id: data_id
+        :param group: group, use "DEFAULT_GROUP" if no group specified
+        :param cb: callback function
+        :return:
+        """
         if not cb:
             raise ACMException("A callback function is needed.")
         data_id, group = process_common_params(data_id, group)
@@ -221,7 +272,15 @@ class ACMClient:
             self.puller_mapping[cache_key] = (puller, key_list)
 
     @synchronized_with_attr("pulling_lock")
-    def remove_watcher(self, data_id, group, cb):
+    def remove_watcher(self, data_id, group, cb, remove_all=False):
+        """Remove watcher from specified key
+
+        :param data_id: data_id
+        :param group: group, use "DEFAULT_GROUP" if no group specified
+        :param cb: callback function
+        :param remove_all: weather to remove all occurrence of the callback or just once
+        :return:
+        """
         if not cb:
             raise ACMException("A callback function is needed.")
         data_id, group = process_common_params(data_id, group)
@@ -233,10 +292,18 @@ class ACMClient:
         if not wl:
             logger.warning("[remove-watcher] there is no watcher on key:%s" % cache_key)
             return
+
+        wrap_to_remove = list()
         for i in wl:
             if i.callback == cb:
-                wl.remove(i)
-        logger.info("[remove-watcher] callback:%s is removed from key:%s" % (cb.__name__, cache_key))
+                wrap_to_remove.append(i)
+                if not remove_all:
+                    break
+
+        for i in wrap_to_remove:
+            wl.remove(i)
+
+        logger.info("[remove-watcher] %s is removed from %s, remove all:%s" % (cb.__name__, cache_key, remove_all))
         if not wl:
             logger.debug("[remove-watcher] there is no watcher for:%s, kick out from pulling" % cache_key)
             self.watcher_mapping.pop(cache_key)
@@ -245,42 +312,48 @@ class ACMClient:
             if not puller_info[1]:
                 logger.debug("[remove-watcher] there is no pulling keys for puller:%s, stop it" % puller_info[0])
                 self.puller_mapping.pop(cache_key)
-                puller_info[0].stop()
+                puller_info[0].terminate()
 
-    def _do_sync_req(self, url, method, headers=None, params=None, data=None, timeout=None):
-        url = "?".join([url, parse.urlencode(params)]) if params else url
+    def _do_sync_req(self, url, headers=None, params=None, data=None, timeout=None):
+        url = "?".join([url, urlencode(params)]) if params else url
         all_headers = self._get_common_headers(params)
         if headers:
             all_headers.update(headers)
         logger.debug(
-            "[do-sync-req] method:%s, url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (
-                method, url, all_headers, params, data, timeout))
+            "[do-sync-req] url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (url, all_headers, params, data, timeout))
         tries = 0
         while True:
             try:
-                server = self.current_server()
-                server_url = "%s://%s:%s" % ("https" if self.tls_enabled else "http", server[0], server[1])
-                req = request.Request(url=server_url + url, data=data, headers=all_headers, method=method)
-                resp = request.urlopen(req, timeout=timeout)
-                logger.debug("[do-sync-req] info from server:%s" % str(server))
+                address, port, is_ip_address = self.current_server()
+                server = ":".join([address, str(port)])
+                # if tls is enabled and server address is in ip, turn off verification
+                if self.tls_enabled and is_ip_address:
+                    context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+                    context.check_hostname = False
+                else:
+                    context = None
+                server_url = "%s://%s" % ("https" if self.tls_enabled else "http", server)
+                req = Request(url=server_url + url, data=data, headers=all_headers)
+                resp = urlopen(req, timeout=timeout, context=context)
+                logger.debug("[do-sync-req] info from server:%s" % server)
                 return resp
-            except error.HTTPError as e:
+            except HTTPError as e:
                 if e.code in {HTTPStatus.INTERNAL_SERVER_ERROR, HTTPStatus.BAD_GATEWAY,
                               HTTPStatus.SERVICE_UNAVAILABLE}:
-                    logger.warning("[do-sync-req] server:%s is not available for reason:%s" % (str(server), e.msg))
+                    logger.warning("[do-sync-req] server:%s is not available for reason:%s" % (server, e.msg))
                 else:
                     raise
             except socket.timeout:
-                logger.warning("[do-sync-req] server:%s request timeout" % (str(server)))
-            except error.URLError as e:
-                logger.warning("[do-sync-req] server:%s connection error:%s" % (str(server), e.reason))
+                logger.warning("[do-sync-req] server:%s request timeout" % server)
+            except URLError as e:
+                logger.warning("[do-sync-req] server:%s connection error:%s" % (server, e.reason))
 
             tries += 1
             if tries == len(self.server_list):
-                logger.error("[do-sync-req] server:%s maybe down, no server is currently available" % str(server))
+                logger.error("[do-sync-req] server:%s maybe down, no server is currently available" % server)
                 raise ACMException("All server are not available")
             self.server_offset = (self.server_offset + 1) % len(self.server_list)
-            logger.warning("[do-sync-req] server:%s maybe down, skip to next" % str(server))
+            logger.warning("[do-sync-req] server:%s maybe down, skip to next" % server)
 
     def _do_pulling(self, cache_list, queue):
         cache_pool = dict()
@@ -309,24 +382,30 @@ class ACMClient:
 
             logger.debug(
                 "[do-pulling] try to detected change from server probe string is %s" % truncate(probe_update_string))
-            headers = {"longPullingTimeout": "30000"}
+            headers = {"longPullingTimeout": int(self.pulling_timeout * 1000)}
             if contains_init_key:
                 headers["longPullingNoHangUp"] = "true"
 
-            data = parse.urlencode({"Probe-Modify-Request": probe_update_string}).encode()
-            # todo handle error
-            resp = self._do_sync_req("/diamond-server/config.co", "POST", headers, None, data
-                                     , 30000)
+            data = urlencode({"Probe-Modify-Request": probe_update_string}).encode()
+
+            changed_keys = list()
+            try:
+                resp = self._do_sync_req("/diamond-server/config.co", headers, None, data, self.pulling_timeout + 10)
+                changed_keys = parse_pulling_result(resp.read())
+            except ACMException as e:
+                logger.error("[do-pulling] acm exception: %s" % str(e))
+            except Exception as e:
+                logger.exception("[do-pulling] exception %s occur, return empty list" % str(e))
+
             for cache_key, cache_data in cache_pool.items():
                 cache_data.is_init = False
-
-            changed_keys = parse_pulling_result(resp.read())
 
             for data_id, group, namespace in changed_keys:
                 content = self.get(data_id, group)
                 cache_key = group_key(data_id, group, namespace)
-                cache_pool[cache_key].md5 = hashlib.md5(content.encode()).hexdigest()
-                queue.put((cache_key, content))
+                md5 = hashlib.md5(content.encode()).hexdigest() if content is not None else None
+                cache_pool[cache_key].md5 = md5
+                queue.put((cache_key, content, md5))
 
     @synchronized_with_attr("pulling_lock")
     def _int_pulling(self):
@@ -344,7 +423,7 @@ class ACMClient:
 
     def _process_change_event(self):
         while True:
-            cache_key, content = self.notify_queue.get()
+            cache_key, content, md5 = self.notify_queue.get()
             logger.debug("[process-change-event] receive an event:%s" % cache_key)
             wl = self.watcher_mapping.get(cache_key)
             if not wl:
@@ -358,19 +437,21 @@ class ACMClient:
                 "namespace": namespace,
                 "content": content
             }
-            md5 = hashlib.md5(content.encode()).hexdigest()
             for watcher in wl:
                 if not watcher.last_md5 == md5:
-                    # todo error handle
                     logger.debug(
-                        "[process-change-event] md5 has changed since last call, calling %s" % watcher.callback.__name__)
-                    self.callback_tread_pool.apply(watcher.callback, (params,))
+                        "[process-change-event] md5 changed since last call, calling %s" % watcher.callback.__name__)
+                    try:
+                        self.callback_tread_pool.apply(watcher.callback, (params,))
+                    except Exception as e:
+                        logger.exception("[process-change-event] exception %s occur while calling %s " % (
+                            str(e), watcher.callback.__name__))
                     watcher.last_md5 = md5
 
     def _get_common_headers(self, params):
-        # todo add client identification info
         headers = {
-            "Client-Version": "3.8.6",
+            "Diamond-Client-AppName": self.app_name,
+            "Client-Version": VERSION,
             "Content-Type": "application/x-www-form-urlencoded; charset=GBK",
             "exConfigInfo": "true",
         }

@@ -1,13 +1,27 @@
-from urllib import request, error
-from http.client import HTTPException
-
+import socket
 import logging
+
+try:
+    # python3.6
+    from urllib.request import Request, urlopen
+    from urllib.error import URLError
+except ImportError:
+    # python2.7
+    from urllib2 import Request, urlopen, URLError
 
 logger = logging.getLogger("acm")
 
 ADDRESS_URL_PTN = "http://%s/diamond-server/diamond"
 
 ADDRESS_SERVER_TIMEOUT = 3  # in seconds
+
+
+def is_ipv4_address(address):
+    try:
+        socket.inet_aton(address)
+    except socket.error:
+        return False
+    return True
 
 
 def get_server_list(endpoint, default_port=8080, cai_enabled=True):
@@ -17,9 +31,9 @@ def get_server_list(endpoint, default_port=8080, cai_enabled=True):
         content = endpoint.encode()
     else:
         try:
-            content = request.urlopen(ADDRESS_URL_PTN % endpoint, timeout=ADDRESS_SERVER_TIMEOUT).read()
+            content = urlopen(ADDRESS_URL_PTN % endpoint, timeout=ADDRESS_SERVER_TIMEOUT).read()
             logger.debug("[get-server-list] content from endpoint:%s" % content)
-        except (error.URLError, HTTPException, OSError) as e:
+        except (URLError, OSError, socket.timeout) as e:
             logger.error("[get-server-list] get server from %s failed, cause:%s" % (endpoint, e))
             return server_list
 
@@ -27,10 +41,10 @@ def get_server_list(endpoint, default_port=8080, cai_enabled=True):
         for server_info in content.decode().strip().split("\n"):
             sp = server_info.strip().split(":")
             if len(sp) == 1:
-                server_list.append((sp[0], default_port))
+                server_list.append((sp[0], default_port, is_ipv4_address(sp[0])))
             else:
                 try:
-                    server_list.append((sp[0], int(sp[1])))
+                    server_list.append((sp[0], int(sp[1], is_ipv4_address(sp[0]))))
                 except ValueError:
                     logger.warning("[get-server-list] bad server address:%s ignored" % server_info)
 

@@ -21,7 +21,10 @@ def read_file(base, key):
 def save_file(base, key, content):
     file_path = os.path.join(base, key)
     if not os.path.isdir(base):
-        os.makedirs(base, exist_ok=True)
+        try:
+            os.makedirs(base)
+        except OSError:
+            logger.warning("[save-file] dir %s is already exist" % base)
 
     with open(file_path, "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
@@ -35,5 +38,5 @@ def delete_file(base, key):
     file_path = os.path.join(base, key)
     try:
         os.remove(file_path)
-    except FileNotFoundError:
+    except OSError:
         logger.warning("[delete-file] file not exists, file path:%s" % file_path)
