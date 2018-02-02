@@ -1,5 +1,7 @@
 # User Guide
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/alibaba/acm-sdk-python/blob/master/LICENSE)
+
 ## Introduction
 
 Python SDK for ACM. 
