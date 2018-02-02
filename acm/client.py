@@ -31,7 +31,7 @@ from .files import read_file, save_file, delete_file
 logger = logging.getLogger("acm")
 
 DEBUG = True
-VERSION = "1.0"
+VERSION = "0.1.2"
 
 if DEBUG:
     handler = logging.StreamHandler()

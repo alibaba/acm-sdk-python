@@ -1,5 +1,6 @@
 # User Guide
 
+[![Pypi Version](https://badge.fury.io/py/acm-sdk-python.svg)](https://badge.fury.io/py/acm-sdk-python)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/alibaba/acm-sdk-python/blob/master/LICENSE)
 
 ## Introduction
@@ -7,12 +8,12 @@
 Python SDK for ACM. 
 
 ### Features
-1. Get config from ACM server use REST API
-2. Watch config changes from server
-3. Auto failover when server down
-4. TLS supported
-5. Address server supported
-6. Both Aliyun and Stand-alone deployment supported
+1. Get config from ACM server use REST API.
+2. Watch config changes from server.
+3. Auto failover on server failure.
+4. TLS supported.
+5. Address server supported.
+6. Both Alibaba Cloud ACM and Stand-alone deployment supported.
 
 ### Supported Python：
 
@@ -28,10 +29,8 @@ Python SDK for ACM.
 ### Change Logs
 
 ## Installation
-For development only:
 ```shell
-git clone ${REPO_URL}
-pip install acm-sdk-python/dist/acm_sdk_python-0.1.0-py2.py3-none-any.whl
+pip install acm-sdk-python
 ```
 
 ## Getting Started
@@ -57,75 +56,75 @@ time.sleep(5) # wait for an config change
 ```
 
 ## Configuration
-Client can be configured by constructor：
 ```
 client = ACMClient(endpoint, namespace, ak, sk, default_timeout, tls_enabled, auth_enabled, cai_enabled, pulling_timeout,
             pulling_config_size, callback_thread_num, failover_base, snapshot_base, app_name)
 ```
 
 ### Options
->* **endpoint** - *required*  - ACM server address
->* **namespace** - namespace | default: `DEFAULT_TENANT`
->* **ak** - *AccessKey* for Aliyun | default: `None`
->* **sk** - *SecretKey* for Aliyun | default: `None`
->* **default_timeout** - default timeout for get config from server in seconds | default: `3`
->* **tls_enabled** - whether to use https | default: `False`
->* **auth_enabled** - whether to use auth features | default: `True`
->* **cai_enabled** - whether to user address server | default: `True`
->* **pulling_timeout** - long polling timeout in seconds | default: `30`
->* **pulling_config_size** - max config items number listened by one polling process | default: `3000`
->* **callback_thread_num** - concurrency for invoking callback | default: `10`
->* **failover_base** - dir to store failover config files | default: `${cwd}/acm-data/data`
->* **snapshot_base** - dir to store snapshot config files | default: `${cwd}/acm-data/snapshot`
->* **app_name** - client app identifier | default `ACM-SDK-Python`
+>* **endpoint** - *required*  - ACM server address.
+>* **namespace** - Namespace. | default: `DEFAULT_TENANT`
+>* **ak** - *AccessKey* For Alibaba Cloud ACM. | default: `None`
+>* **sk** - *SecretKey* For Alibaba Cloud ACM. | default: `None`
+>* **default_timeout** - Default timeout for get config from server in seconds. | default: `3`
+>* **tls_enabled** - Whether to use https. | default: `False`
+>* **auth_enabled** - Whether to use auth features. | default: `True`
+>* **cai_enabled** - Whether to user address server. | default: `True`
+>* **pulling_timeout** - Long polling timeout in seconds. | default: `30`
+>* **pulling_config_size** - Max config items number listened by one polling process. | default: `3000`
+>* **callback_thread_num** - Concurrency for invoking callback. | default: `10`
+>* **failover_base** - Dir to store failover config files. | default: `${cwd}/acm-data/data`
+>* **snapshot_base** - Dir to store snapshot config files. | default: `${cwd}/acm-data/snapshot`
+>* **app_name** - Client app identifier. | default `ACM-SDK-Python`
 
 ## API Reference
  
-### get config
+### Get Config
+>`ACMClient.get(data_id, group, timeout)`
+* `param` **data_id** Data id.
+* `param` **group** Group, use `DEFAULT_GROUP` if no group specified.
+* `param` **timeout** Timeout for requesting server in seconds.
+* `return` 
+
+***
 Get value of one config item following priority:
 
-* Step 1 - Get from local failover dir(default: `${cwd}/acm/data`)
-  * failover dir can be manually copied from snapshot dir(default: `${cwd}/acm/snapshot`) in advance
-  * this helps to suppress the effect of known server failure
+* Step 1 - Get from local failover dir(default: `${cwd}/acm/data`).
+  * Failover dir can be manually copied from snapshot dir(default: `${cwd}/acm/snapshot`) in advance.
+  * This helps to suppress the effect of known server failure.
     
-* Step 2 - Get from one server until value is got or all servers tried
-  * content will be save to snapshot dir after got from server
+* Step 2 - Get from one server until value is got or all servers tried.
+  * Content will be save to snapshot dir after got from server.
 
-* Step 3 - Get from snapshot dir
+* Step 3 - Get from snapshot dir.
 
->`ACMClient.get(data_id, group, timeout)`
->* `param` **data_id** dataId
->* `param` **group** group, use `DEFAULT_GROUP` if no group specified
->* `param` **timeout** timeout for requesting server in seconds
->* `return` value
-
-***
-### add watchers
-Add watchers to a specified config item.
-* Once changes or deletion of the item happened, callback functions will be invoked
-* If the item is already exists in server, callback functions will be invoked for once
-* Multiple callbacks on one item is allowed and all callback functions are invoked concurrently by `threading.Thread`
-* Callback functions are invoked from current process
-
+### Add Watchers
 >`ACMClient.add_watchers(data_id, group, cb_list)`
->* `param` **data_id** data_id
->* `param` **group** group, use `DEFAULT_GROUP` if no group specified
->* `param` **cb_list** list of callback functions
->* `return`
+* `param` **data_id** Data id.
+* `param` **group** Group, use `DEFAULT_GROUP` if no group specified.
+* `param` **cb_list** List of callback functions to add.
+* `return`
 
 ***
-### remove watcher
+Add watchers to a specified config item.
+* Once changes or deletion of the item happened, callback functions will be invoked.
+* If the item is already exists in server, callback functions will be invoked for once.
+* Multiple callbacks on one item is allowed and all callback functions are invoked concurrently by `threading.Thread`.
+* Callback functions are invoked from current process.
+
+### Remove Watcher
+>`ACMClient.remove_watcher(data_id, group, cb, remove_all)`
+* `param` **data_id** Data id.
+* `param` **group** Group, use "DEFAULT_GROUP" if no group specified.
+* `param` **cb** Callback function to delete.
+* `param` **remove_all** Whether to remove all occurrence of the callback or just once.
+* `return`
+
+***
 Remove watcher from specified key.
 
->`ACMClient.remove_watcher(data_id, group, cb, remove_all)`
->* `param` **data_id** data_id
->* `param` **group** group, use "DEFAULT_GROUP" if no group specified
->* `param` **cb** callback function
->* `param` **remove_all** whether to remove all occurrence of the callback or just once
->* `return`
-
-***
 ## Other Resources
 
+* Alibaba ACM homepage: https://www.aliyun.com/product/acm
 
 

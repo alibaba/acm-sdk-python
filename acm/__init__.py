@@ -1,5 +1,5 @@
 from .client import ACMClient, ACMException
 
-__version__ = "0.1.0"
+__version__ = client.VERSION
 
 __all__ = ["ACMClient", "ACMException"]
