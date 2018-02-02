@@ -30,8 +30,8 @@ from .files import read_file, save_file, delete_file
 
 logger = logging.getLogger("acm")
 
-DEBUG = True
-VERSION = "0.1.2"
+DEBUG = False
+VERSION = "0.1.4"
 
 if DEBUG:
     handler = logging.StreamHandler()
