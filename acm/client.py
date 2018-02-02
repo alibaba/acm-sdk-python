@@ -226,7 +226,11 @@ class ACMClient:
 
     @synchronized_with_attr("pulling_lock")
     def add_watcher(self, data_id, group, cb):
-        """Add a watcher to specified item.
+        self.add_watchers(data_id, group, [cb])
+
+    @synchronized_with_attr("pulling_lock")
+    def add_watchers(self, data_id, group, cb_list):
+        """Add watchers to specified item.
 
         1.  callback is invoked from current process concurrently by thread pool
         2.  callback is invoked at once if the item exists
@@ -234,10 +238,10 @@ class ACMClient:
 
         :param data_id: data_id
         :param group: group, use "DEFAULT_GROUP" if no group specified
-        :param cb: callback function
+        :param cb_list: callback functions
         :return:
         """
-        if not cb:
+        if not cb_list:
             raise ACMException("A callback function is needed.")
         data_id, group = process_common_params(data_id, group)
         logger.info("[add-watcher] data_id:%s, group:%s, namespace:%s" % (data_id, group, self.namespace))
@@ -246,9 +250,10 @@ class ACMClient:
         if not wl:
             wl = list()
             self.watcher_mapping[cache_key] = wl
-        wl.append(WatcherWrap(cache_key, cb))
-        logger.info("[add-watcher] watcher has been added for key:%s, new callback is:%s, callback number is:%s" % (
-            cache_key, cb.__name__, len(wl)))
+        for cb in cb_list:
+            wl.append(WatcherWrap(cache_key, cb))
+            logger.info("[add-watcher] watcher has been added for key:%s, new callback is:%s, callback number is:%s" % (
+                cache_key, cb.__name__, len(wl)))
 
         if self.puller_mapping is None:
             logger.debug("[add-watcher] pulling should be initialized")

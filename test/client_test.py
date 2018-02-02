@@ -111,10 +111,18 @@ class TestClient(unittest.TestCase):
     def test_long_pulling(self):
         import time
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+
+        class Share:
+            content = None
+
+        def cb(x):
+            Share.content = x["content"]
+        # test common
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
-        group = "group1"
-        c.add_watcher(data_id, group, lambda x: print(x))
-        time.sleep(10)
+        group = "group"
+        c.add_watcher(data_id, group, cb)
+        time.sleep(1)
+        self.assertIsNotNone(Share.content)
 
     def test_get_from_failover(self):
         from acm import files

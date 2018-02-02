@@ -100,17 +100,17 @@ Get value of one config item following priority:
 >* `return` value
 
 ***
-### add watcher
-Add a watcher to a specified config item.
-* Once changes or deletion of the item happened, callback function will be invoked
-* If the item is already exists, callback function will invoked at once
+### add watchers
+Add watchers to a specified config item.
+* Once changes or deletion of the item happened, callback functions will be invoked
+* If the item is already exists in server, callback functions will be invoked for once
 * Multiple callbacks on one item is allowed and all callback functions are invoked concurrently by `threading.Thread`
-* Callback function is invoked from current process
+* Callback functions are invoked from current process
 
->`ACMClient.add_watcher(data_id, group, cb)`
+>`ACMClient.add_watchers(data_id, group, cb_list)`
 >* `param` **data_id** data_id
 >* `param` **group** group, use `DEFAULT_GROUP` if no group specified
->* `param` **cb** callback function
+>* `param` **cb_list** list of callback functions
 >* `return`
 
 ***
