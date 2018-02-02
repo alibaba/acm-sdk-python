@@ -51,7 +51,7 @@ print(client.get(data_id, group))
 # add watch
 import time
 client.add_watcher(data_id, group, lambda x:print("config change detected: " + x))
-time.sleep(5) # wait for an config change
+time.sleep(5) # wait for config changes
 
 ```
 
@@ -62,20 +62,20 @@ client = ACMClient(endpoint, namespace, ak, sk, default_timeout, tls_enabled, au
 ```
 
 ### Options
->* *endpoint* - **required**  - ACM server address.
->* *namespace* - Namespace. | default: `DEFAULT_TENANT`
->* *ak* - AccessKey For Alibaba Cloud ACM. | default: `None`
->* *sk* - SecretKey For Alibaba Cloud ACM. | default: `None`
->* *default_timeout* - Default timeout for get config from server in seconds. | default: `3`
->* *tls_enabled* - Whether to use https. | default: `False`
->* *auth_enabled* - Whether to use auth features. | default: `True`
->* *cai_enabled* - Whether to user address server. | default: `True`
->* *pulling_timeout* - Long polling timeout in seconds. | default: `30`
->* *pulling_config_size* - Max config items number listened by one polling process. | default: `3000`
->* *callback_thread_num* - Concurrency for invoking callback. | default: `10`
->* *failover_base* - Dir to store failover config files. | default: `${cwd}/acm-data/data`
->* *snapshot_base* - Dir to store snapshot config files. | default: `${cwd}/acm-data/snapshot`
->* *app_name* - Client app identifier. | default `ACM-SDK-Python`
+* *endpoint* - **required**  - ACM server address.
+* *namespace* - Namespace. | default: `DEFAULT_TENANT`
+* *ak* - AccessKey For Alibaba Cloud ACM. | default: `None`
+* *sk* - SecretKey For Alibaba Cloud ACM. | default: `None`
+* *default_timeout* - Default timeout for get config from server in seconds. | default: `3`
+* *tls_enabled* - Whether to use https. | default: `False`
+* *auth_enabled* - Whether to use auth features. | default: `True`
+* *cai_enabled* - Whether to user address server. | default: `True`
+* *pulling_timeout* - Long polling timeout in seconds. | default: `30`
+* *pulling_config_size* - Max config items number listened by one polling process. | default: `3000`
+* *callback_thread_num* - Concurrency for invoking callback. | default: `10`
+* *failover_base* - Dir to store failover config files. | default: `${cwd}/acm-data/data`
+* *snapshot_base* - Dir to store snapshot config files. | default: `${cwd}/acm-data/snapshot`
+* *app_name* - Client app identifier. | default `ACM-SDK-Python`
 
 ## API Reference
  
