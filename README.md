@@ -62,28 +62,29 @@ client = ACMClient(endpoint, namespace, ak, sk, default_timeout, tls_enabled, au
 ```
 
 ### Options
->* **endpoint** - *required*  - ACM server address.
->* **namespace** - Namespace. | default: `DEFAULT_TENANT`
->* **ak** - *AccessKey* For Alibaba Cloud ACM. | default: `None`
->* **sk** - *SecretKey* For Alibaba Cloud ACM. | default: `None`
->* **default_timeout** - Default timeout for get config from server in seconds. | default: `3`
->* **tls_enabled** - Whether to use https. | default: `False`
->* **auth_enabled** - Whether to use auth features. | default: `True`
->* **cai_enabled** - Whether to user address server. | default: `True`
->* **pulling_timeout** - Long polling timeout in seconds. | default: `30`
->* **pulling_config_size** - Max config items number listened by one polling process. | default: `3000`
->* **callback_thread_num** - Concurrency for invoking callback. | default: `10`
->* **failover_base** - Dir to store failover config files. | default: `${cwd}/acm-data/data`
->* **snapshot_base** - Dir to store snapshot config files. | default: `${cwd}/acm-data/snapshot`
->* **app_name** - Client app identifier. | default `ACM-SDK-Python`
+>* *endpoint* - **required**  - ACM server address.
+>* *namespace* - Namespace. | default: `DEFAULT_TENANT`
+>* *ak* - AccessKey For Alibaba Cloud ACM. | default: `None`
+>* *sk* - SecretKey For Alibaba Cloud ACM. | default: `None`
+>* *default_timeout* - Default timeout for get config from server in seconds. | default: `3`
+>* *tls_enabled* - Whether to use https. | default: `False`
+>* *auth_enabled* - Whether to use auth features. | default: `True`
+>* *cai_enabled* - Whether to user address server. | default: `True`
+>* *pulling_timeout* - Long polling timeout in seconds. | default: `30`
+>* *pulling_config_size* - Max config items number listened by one polling process. | default: `3000`
+>* *callback_thread_num* - Concurrency for invoking callback. | default: `10`
+>* *failover_base* - Dir to store failover config files. | default: `${cwd}/acm-data/data`
+>* *snapshot_base* - Dir to store snapshot config files. | default: `${cwd}/acm-data/snapshot`
+>* *app_name* - Client app identifier. | default `ACM-SDK-Python`
 
 ## API Reference
  
 ### Get Config
 >`ACMClient.get(data_id, group, timeout)`
-* `param` **data_id** Data id.
-* `param` **group** Group, use `DEFAULT_GROUP` if no group specified.
-* `param` **timeout** Timeout for requesting server in seconds.
+
+* `param` *data_id* Data id.
+* `param` *group* Group, use `DEFAULT_GROUP` if no group specified.
+* `param` *timeout* Timeout for requesting server in seconds.
 * `return` 
 
 ***
@@ -100,9 +101,10 @@ Get value of one config item following priority:
 
 ### Add Watchers
 >`ACMClient.add_watchers(data_id, group, cb_list)`
-* `param` **data_id** Data id.
-* `param` **group** Group, use `DEFAULT_GROUP` if no group specified.
-* `param` **cb_list** List of callback functions to add.
+
+* `param` *data_id* Data id.
+* `param` *group* Group, use `DEFAULT_GROUP` if no group specified.
+* `param` *cb_list* List of callback functions to add.
 * `return`
 
 ***
@@ -114,10 +116,11 @@ Add watchers to a specified config item.
 
 ### Remove Watcher
 >`ACMClient.remove_watcher(data_id, group, cb, remove_all)`
-* `param` **data_id** Data id.
-* `param` **group** Group, use "DEFAULT_GROUP" if no group specified.
-* `param` **cb** Callback function to delete.
-* `param` **remove_all** Whether to remove all occurrence of the callback or just once.
+
+* `param` *data_id* Data id.
+* `param` *group* Group, use "DEFAULT_GROUP" if no group specified.
+* `param` *cb* Callback function to delete.
+* `param` *remove_all* Whether to remove all occurrence of the callback or just once.
 * `return`
 
 ***
