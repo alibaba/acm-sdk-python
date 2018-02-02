@@ -4,9 +4,9 @@ import acm
 
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "60186702-3643-4214-bf88-1a244a700d38"
-AK = "654b437ab82b4d0ba418a10b71ce9750"
-SK = "GLffQ/+fSXMVbCwyYSyTsydxcao="
+NAMESPACE = "**********"
+AK = "**********"
+SK = "**********"
 
 
 class TestClient(unittest.TestCase):

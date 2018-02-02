@@ -37,9 +37,9 @@ pip install acm-sdk-python/dist/acm_sdk_python-0.1.0-py2.py3-none-any.whl
 import acm
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "60186702-3643-4214-bf88-1a244a700d38"
-AK = "654b437ab82b4d0ba418a10b71ce9750"
-SK = "GLffQ/+fSXMVbCwyYSyTsydxcao="
+NAMESPACE = "**********"
+AK = "**********"
+SK = "**********"
 
 # get config
 client = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
