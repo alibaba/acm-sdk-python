@@ -1,5 +1,6 @@
 import socket
 import logging
+import random
 
 try:
     # python3.6
@@ -47,5 +48,7 @@ def get_server_list(endpoint, default_port=8080, cai_enabled=True):
                     server_list.append((sp[0], int(sp[1], is_ipv4_address(sp[0]))))
                 except ValueError:
                     logger.warning("[get-server-list] bad server address:%s ignored" % server_info)
+
+    random.shuffle(server_list)
 
     return server_list
