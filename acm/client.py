@@ -20,6 +20,7 @@ except ImportError:
     import httplib as HTTPStatus
     from urllib2 import Request, urlopen, HTTPError, URLError
     from urllib import urlencode, unquote_plus
+
     base64.encodebytes = base64.encodestring
 
 from .commons import synchronized_with_attr, truncate
@@ -90,6 +91,7 @@ class CacheData:
     def __init__(self, key, client):
         self.key = key
         local_value = read_file(client.failover_base, key) or read_file(client.snapshot_base, key)
+        self.content = local_value
         self.md5 = hashlib.md5(local_value.encode()).hexdigest() if local_value else None
         self.is_init = True
         if not self.md5:
@@ -320,7 +322,8 @@ class ACMClient:
         if headers:
             all_headers.update(headers)
         logger.debug(
-            "[do-sync-req] url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (url, all_headers, params, data, timeout))
+            "[do-sync-req] url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (
+            url, all_headers, params, data, timeout))
         tries = 0
         while True:
             try:
@@ -391,7 +394,8 @@ class ACMClient:
             changed_keys = list()
             try:
                 resp = self._do_sync_req("/diamond-server/config.co", headers, None, data, self.pulling_timeout + 10)
-                changed_keys = parse_pulling_result(resp.read())
+                changed_keys = {group_key(*i) for i in parse_pulling_result(resp.read())}
+                logger.debug("[do-pulling] following keys are changed from server %s" % truncate(str(changed_keys)))
             except ACMException as e:
                 logger.error("[do-pulling] acm exception: %s" % str(e))
             except Exception as e:
@@ -399,13 +403,12 @@ class ACMClient:
 
             for cache_key, cache_data in cache_pool.items():
                 cache_data.is_init = False
-
-            for data_id, group, namespace in changed_keys:
-                content = self.get(data_id, group)
-                cache_key = group_key(data_id, group, namespace)
-                md5 = hashlib.md5(content.encode()).hexdigest() if content is not None else None
-                cache_pool[cache_key].md5 = md5
-                queue.put((cache_key, content, md5))
+                if cache_key in changed_keys:
+                    data_id, group, namespace = parse_key(cache_key)
+                    content = self.get(data_id, group)
+                    md5 = hashlib.md5(content.encode()).hexdigest() if content is not None else None
+                    cache_data.md5 = md5
+                queue.put((cache_key, cache_data.content, cache_data.md5))
 
     @synchronized_with_attr("pulling_lock")
     def _int_pulling(self):
@@ -416,18 +419,18 @@ class ACMClient:
         self.notify_queue = Queue()
         self.callback_tread_pool = pool.ThreadPool(self.callback_tread_num)
         self.process_mgr = Manager()
-        t = Thread(target=self._process_change_event)
+        t = Thread(target=self._process_polling_result)
         t.setDaemon(True)
         t.start()
         logger.info("[init-pulling] init completed")
 
-    def _process_change_event(self):
+    def _process_polling_result(self):
         while True:
             cache_key, content, md5 = self.notify_queue.get()
-            logger.debug("[process-change-event] receive an event:%s" % cache_key)
+            logger.debug("[process-polling-result] receive an event:%s" % cache_key)
             wl = self.watcher_mapping.get(cache_key)
             if not wl:
-                logger.warning("[process-change-event] no watcher on %s, ignored" % cache_key)
+                logger.warning("[process-polling-result] no watcher on %s, ignored" % cache_key)
                 continue
 
             data_id, group, namespace = parse_key(cache_key)
@@ -440,11 +443,11 @@ class ACMClient:
             for watcher in wl:
                 if not watcher.last_md5 == md5:
                     logger.debug(
-                        "[process-change-event] md5 changed since last call, calling %s" % watcher.callback.__name__)
+                        "[process-polling-result] md5 changed since last call, calling %s" % watcher.callback.__name__)
                     try:
                         self.callback_tread_pool.apply(watcher.callback, (params,))
                     except Exception as e:
-                        logger.exception("[process-change-event] exception %s occur while calling %s " % (
+                        logger.exception("[process-polling-result] exception %s occur while calling %s " % (
                             str(e), watcher.callback.__name__))
                     watcher.last_md5 = md5
 
