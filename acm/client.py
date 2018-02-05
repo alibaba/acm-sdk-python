@@ -31,7 +31,7 @@ from .files import read_file, save_file, delete_file
 logger = logging.getLogger("acm")
 
 DEBUG = False
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 WORD_SEPARATOR = bytes([2]).decode()
@@ -107,20 +107,26 @@ class ACMClient:
 
     @staticmethod
     def set_debugging():
-        global logger
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(message)s"))
-        logger.addHandler(handler)
-        logger.setLevel(logging.DEBUG)
-        ACMClient.debug = True
+        if not ACMClient.debug:
+            global logger
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(message)s"))
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+            ACMClient.debug = True
 
     def __init__(self, endpoint, namespace=None, ak=None, sk=None, ):
         self.endpoint = endpoint
         self.namespace = namespace or DEFAULTS["NAMESPACE"]
         self.ak = ak
         self.sk = sk
-        self.server_list = list()
+
+        self.server_list = None
+        self.server_list_lock = RLock()
+        self.current_server = None
         self.server_offset = 0
+        self.server_refresh_running = False
+
         self.watcher_mapping = dict()
         self.pulling_lock = RLock()
         self.puller_mapping = None
@@ -150,19 +156,56 @@ class ACMClient:
             logger.debug("[set_options] key:%s, value:%s" % (k, v))
             self.__setattr__(k, v)
 
-    def current_server(self):
-        if not self.server_list:
-            logger.info("[current-server] server list is null, try to initialize")
-            server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled)
-            if not server_list:
-                logger.error("[client-get-server] server_list is null from %s" % self.endpoint)
-                return None
-            self.server_list = server_list
+    def _refresh_server_list(self):
+        with self.server_list_lock:
+            if self.server_refresh_running:
+                logger.warning("[refresh-server] task is running, aborting")
+                return
+            self.server_refresh_running = True
 
-            logger.info("[current-server] server_num:%s server_list:%s" % (len(self.server_list), self.server_list))
-        server = self.server_list[self.server_offset]
-        logger.info("[current-server] use server:%s, offset:%s" % (str(server), self.server_offset))
-        return server
+        while True:
+            try:
+                time.sleep(30)
+                logger.debug("[refresh-server] try to refresh server list")
+                server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled)
+                logger.debug(
+                    "[refresh-server] server_num:%s server_list:%s" % (len(server_list), server_list))
+                if not server_list:
+                    logger.error("[refresh-server] empty server_list get from %s, do not refresh" % self.endpoint)
+                    continue
+                with self.server_list_lock:
+                    self.server_list = server_list
+                    self.server_offset = 0
+                    if self.current_server not in server_list:
+                        logger.warning("[refresh-server] %s is not effective, change one" % str(self.current_server))
+                        self.current_server = server_list[self.server_offset]
+            except Exception as e:
+                logger.exception("[refresh-server] exception %s occur" % str(e))
+
+    def change_server(self):
+        with self.server_list_lock:
+            self.server_offset = (self.server_offset + 1) % len(self.server_list)
+            self.current_server = self.server_list[self.server_offset]
+
+    def get_server(self):
+        if self.server_list is None:
+            with self.server_list_lock:
+                logger.info("[get-server] server list is null, try to initialize")
+                server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled)
+                if not server_list:
+                    logger.error("[get-server] empty server_list get from %s" % self.endpoint)
+                    return None
+                self.server_list = server_list
+                self.current_server = self.server_list[self.server_offset]
+                logger.info("[get-server] server_num:%s server_list:%s" % (len(self.server_list), self.server_list))
+
+            if self.cai_enabled:
+                t = Thread(target=self._refresh_server_list)
+                t.setDaemon(True)
+                t.start()
+
+        logger.info("[get-server] use server:%s" % str(self.current_server))
+        return self.current_server
 
     def get(self, data_id, group, timeout=None):
         """Get value of one config item.
@@ -350,11 +393,11 @@ class ACMClient:
         tries = 0
         while True:
             try:
-                server_info = self.current_server()
+                server_info = self.get_server()
                 if not server_info:
                     logger.error("[do-sync-req] can not get one server.")
                     raise ACMException("Server is not available.")
-                address, port, is_ip_address = self.current_server()
+                address, port, is_ip_address = server_info
                 server = ":".join([address, str(port)])
                 # if tls is enabled and server address is in ip, turn off verification
                 if self.tls_enabled and is_ip_address:
@@ -374,16 +417,16 @@ class ACMClient:
                 else:
                     raise
             except socket.timeout:
-                logger.warning("[do-sync-req] server:%s request timeout" % server)
+                logger.warning("[do-sync-req] %s request timeout" % server)
             except URLError as e:
-                logger.warning("[do-sync-req] server:%s connection error:%s" % (server, e.reason))
+                logger.warning("[do-sync-req] %s connection error:%s" % (server, e.reason))
 
             tries += 1
-            if tries == len(self.server_list):
-                logger.error("[do-sync-req] server:%s maybe down, no server is currently available" % server)
+            if tries >= len(self.server_list):
+                logger.error("[do-sync-req] %s maybe down, no server is currently available" % server)
                 raise ACMException("All server are not available")
-            self.server_offset = (self.server_offset + 1) % len(self.server_list)
-            logger.warning("[do-sync-req] server:%s maybe down, skip to next" % server)
+            self.change_server()
+            logger.warning("[do-sync-req] %s maybe down, skip to next" % server)
 
     def _do_pulling(self, cache_list, queue):
         cache_pool = dict()

@@ -1,26 +1,30 @@
 from __future__ import print_function
 import unittest
 import acm
+from acm import files
+import time
+import shutil
 
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "****************"
-AK = "****************"
-SK = "****************"
+NAMESPACE = "**********"
+AK = "**********"
+SK = "**********"
 
 
 class TestClient(unittest.TestCase):
 
     def test_get_server(self):
+        acm.ACMClient.set_debugging()
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
-        self.assertIsInstance(c.current_server(), tuple)
+        self.assertIsInstance(c.get_server(), tuple)
 
     def test_get_server_err(self):
         c2 = acm.ACMClient("100.100.84.215:8080")
-        self.assertIsNone(c2.current_server())
+        self.assertIsNone(c2.get_server())
 
         c3 = acm.ACMClient("10.101.84.215:8081")
-        self.assertIsNone(c3.current_server())
+        self.assertIsNone(c3.get_server())
 
     def test_get_server_no_cai(self):
         acm.ACMClient.set_debugging()
@@ -50,15 +54,30 @@ class TestClient(unittest.TestCase):
         self.assertIsNotNone(c.get(data_id, group))
 
     def test_server_failover(self):
-        c = acm.ACMClient(ENDPOINT)
-        c.server_list = [("1.100.84.215", 8080, True), ("11.162.248.130", 8080, True)]
-        data_id = "com.alibaba"
-        group = "tsing"
-        self.assertIsNone(c.get(data_id, group))
+        acm.ACMClient.set_debugging()
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.server_list = [("1.100.84.215", 8080, True), ("139.196.135.144", 8080, True)]
+        c.current_server = ("1.100.84.215", 8080, True)
+        data_id = "com.alibaba.cloud.acm:sample-app.properties"
+        group = "group"
+        self.assertIsNotNone(c.get(data_id, group))
+
+    def test_server_failover_comp(self):
+        acm.ACMClient.set_debugging()
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.get_server()
+        c.server_list = [("1.100.84.215", 8080, True), ("100.196.135.144", 8080, True)]
+        c.current_server = ("1.100.84.215", 8080, True)
+        data_id = "com.alibaba.cloud.acm:sample-app.properties"
+        group = "group"
+        shutil.rmtree(c.snapshot_base, True)
         self.assertIsNone(c.get(data_id, group))
 
+        time.sleep(31)
+        shutil.rmtree(c.snapshot_base, True)
+        self.assertIsNotNone(c.get(data_id, group))
+
     def test_fake_watcher(self):
-        import time
         data_id = "com.alibaba"
         group = "tsing"
 
@@ -112,7 +131,6 @@ class TestClient(unittest.TestCase):
         self.assertEqual(Share.count, 0)
 
     def test_long_pulling(self):
-        import time
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
 
         class Share:
@@ -128,8 +146,6 @@ class TestClient(unittest.TestCase):
         self.assertIsNotNone(Share.content)
 
     def test_get_from_failover(self):
-        from acm import files
-        import shutil
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
@@ -139,8 +155,6 @@ class TestClient(unittest.TestCase):
         shutil.rmtree(c.failover_base)
 
     def test_get_from_snapshot(self):
-        from acm import files
-        import shutil
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         c.server_list = [("1.100.84.215", 8080, True)]
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
