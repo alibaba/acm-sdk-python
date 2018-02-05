@@ -4,9 +4,9 @@ import acm
 
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "**********"
-AK = "**********"
-SK = "**********"
+NAMESPACE = "****************"
+AK = "****************"
+SK = "****************"
 
 
 class TestClient(unittest.TestCase):
@@ -17,13 +17,15 @@ class TestClient(unittest.TestCase):
 
     def test_get_server_err(self):
         c2 = acm.ACMClient("100.100.84.215:8080")
-        self.assertRaises(acm.ACMException, c2.current_server)
+        self.assertIsNone(c2.current_server())
 
         c3 = acm.ACMClient("10.101.84.215:8081")
-        self.assertRaises(acm.ACMException, c3.current_server)
+        self.assertIsNone(c3.current_server())
 
     def test_get_server_no_cai(self):
-        c = acm.ACMClient("11.162.248.130:8080", cai_enabled=False)
+        acm.ACMClient.set_debugging()
+        c = acm.ACMClient("11.162.248.130:8080")
+        c.set_options(cai_enabled=False)
         data_id = "com.alibaba"
         group = ""
         self.assertIsNone(c.get(data_id, group))
@@ -41,7 +43,8 @@ class TestClient(unittest.TestCase):
         self.assertIsNone(c.get(data_id, group))
 
     def test_tls(self):
-        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK, tls_enabled=True)
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.set_options(tls_enabled=True)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
         self.assertIsNotNone(c.get(data_id, group))

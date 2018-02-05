@@ -31,13 +31,7 @@ from .files import read_file, save_file, delete_file
 logger = logging.getLogger("acm")
 
 DEBUG = False
-VERSION = "0.1.4"
-
-if DEBUG:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
+VERSION = "0.1.7"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 WORD_SEPARATOR = bytes([2]).decode()
@@ -54,6 +48,9 @@ DEFAULTS = {
     "FAILOVER_BASE": "acm-data/data",
     "SNAPSHOT_BASE": "acm-data/snapshot"
 }
+
+OPTIONS = {"default_timeout", "tls_enabled", "auth_enabled", "cai_enabled", "pulling_timeout", "pulling_config_size",
+           "callback_thread_num", "failover_base", "snapshot_base", "app_name"}
 
 
 class ACMException(Exception):
@@ -106,18 +103,22 @@ class ACMClient:
     * add_watcher
     * remove_watcher
     """
+    debug = False
 
-    def __init__(self, endpoint, namespace=None, ak=None, sk=None, default_timeout=None,
-                 tls_enabled=False, auth_enabled=True, cai_enabled=True, pulling_timeout=None, pulling_config_size=None,
-                 callback_thread_num=None, failover_base=None, snapshot_base=None, app_name=None):
+    @staticmethod
+    def set_debugging():
+        global logger
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        ACMClient.debug = True
+
+    def __init__(self, endpoint, namespace=None, ak=None, sk=None, ):
         self.endpoint = endpoint
         self.namespace = namespace or DEFAULTS["NAMESPACE"]
         self.ak = ak
         self.sk = sk
-        self.default_timeout = default_timeout or DEFAULTS["TIMEOUT"]
-        self.tls_enabled = tls_enabled
-        self.auth_enabled = auth_enabled and self.ak and self.sk
-        self.cai_enabled = cai_enabled
         self.server_list = list()
         self.server_offset = 0
         self.watcher_mapping = dict()
@@ -126,16 +127,28 @@ class ACMClient:
         self.notify_queue = None
         self.callback_tread_pool = None
         self.process_mgr = None
-        self.pulling_timeout = pulling_timeout or DEFAULTS["PULLING_TIMEOUT"]
-        self.pulling_config_size = pulling_config_size or DEFAULTS["PULLING_CONFIG_SIZE"]
-        self.callback_tread_num = callback_thread_num or DEFAULTS["CALLBACK_THREAD_NUM"]
-        self.failover_base = failover_base or DEFAULTS["FAILOVER_BASE"]
-        self.snapshot_base = snapshot_base or DEFAULTS["SNAPSHOT_BASE"]
-        self.app_name = app_name or DEFAULTS["APP_NAME"]
 
-        logger.info(
-            "[client-init] endpoint:%s, tenant:%s, tls_enabled:%s, auth_enabled:%s, "
-            "cai_enabled:%s" % (endpoint, namespace, tls_enabled, auth_enabled, cai_enabled))
+        self.default_timeout = DEFAULTS["TIMEOUT"]
+        self.tls_enabled = False
+        self.auth_enabled = self.ak and self.sk
+        self.cai_enabled = True
+        self.pulling_timeout = DEFAULTS["PULLING_TIMEOUT"]
+        self.pulling_config_size = DEFAULTS["PULLING_CONFIG_SIZE"]
+        self.callback_tread_num = DEFAULTS["CALLBACK_THREAD_NUM"]
+        self.failover_base = DEFAULTS["FAILOVER_BASE"]
+        self.snapshot_base = DEFAULTS["SNAPSHOT_BASE"]
+        self.app_name = DEFAULTS["APP_NAME"]
+
+        logger.info("[client-init] endpoint:%s, tenant:%s" % (endpoint, namespace))
+
+    def set_options(self, **kwargs):
+        for k, v in kwargs.items():
+            if k not in OPTIONS:
+                logger.warning("[set_options] unknown option:%s, ignored" % k)
+                continue
+
+            logger.debug("[set_options] key:%s, value:%s" % (k, v))
+            self.__setattr__(k, v)
 
     def current_server(self):
         if not self.server_list:
@@ -143,7 +156,7 @@ class ACMClient:
             server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled)
             if not server_list:
                 logger.error("[client-get-server] server_list is null from %s" % self.endpoint)
-                raise ACMException("Can't get servers from endpoint:%s" % self.endpoint)
+                return None
             self.server_list = server_list
 
             logger.info("[current-server] server_num:%s server_list:%s" % (len(self.server_list), self.server_list))
@@ -222,7 +235,12 @@ class ACMClient:
 
         logger.error("[get-config] get config from server failed, try snapshot, data_id:%s, group:%s, namespace:%s" % (
             data_id, group, self.namespace))
-        return read_file(self.snapshot_base, cache_key)
+        content = read_file(self.snapshot_base, cache_key)
+        if content is None:
+            logger.warning("[get-config] snapshot is not exist for %s." % cache_key)
+        else:
+            logger.debug("[get-config] get %s from snapshot directory, content is %s" % (cache_key, truncate(content)))
+            return content
 
     @synchronized_with_attr("pulling_lock")
     def add_watcher(self, data_id, group, cb):
@@ -328,10 +346,14 @@ class ACMClient:
             all_headers.update(headers)
         logger.debug(
             "[do-sync-req] url:%s, headers:%s, params:%s, data:%s, timeout:%s" % (
-            url, all_headers, params, data, timeout))
+                url, all_headers, params, data, timeout))
         tries = 0
         while True:
             try:
+                server_info = self.current_server()
+                if not server_info:
+                    logger.error("[do-sync-req] can not get one server.")
+                    raise ACMException("Server is not available.")
                 address, port, is_ip_address = self.current_server()
                 server = ":".join([address, str(port)])
                 # if tls is enabled and server address is in ip, turn off verification
@@ -483,3 +505,7 @@ class ACMClient:
                 headers["Spas-Signature"] = base64.encodebytes(
                     hmac.new(self.sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip()
         return headers
+
+
+if DEBUG:
+    ACMClient.set_debugging()

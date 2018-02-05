@@ -57,25 +57,33 @@ time.sleep(5) # wait for config changes
 
 ## Configuration
 ```
-client = ACMClient(endpoint, namespace, ak, sk, default_timeout, tls_enabled, auth_enabled, cai_enabled, pulling_timeout,
-            pulling_config_size, callback_thread_num, failover_base, snapshot_base, app_name)
+client = ACMClient(endpoint, namespace, ak, sk)
 ```
 
-### Options
 * *endpoint* - **required**  - ACM server address.
 * *namespace* - Namespace. | default: `DEFAULT_TENANT`
 * *ak* - AccessKey For Alibaba Cloud ACM. | default: `None`
 * *sk* - SecretKey For Alibaba Cloud ACM. | default: `None`
-* *default_timeout* - Default timeout for get config from server in seconds. | default: `3`
-* *tls_enabled* - Whether to use https. | default: `False`
-* *auth_enabled* - Whether to use auth features. | default: `True`
-* *cai_enabled* - Whether to user address server. | default: `True`
-* *pulling_timeout* - Long polling timeout in seconds. | default: `30`
-* *pulling_config_size* - Max config items number listened by one polling process. | default: `3000`
-* *callback_thread_num* - Concurrency for invoking callback. | default: `10`
-* *failover_base* - Dir to store failover config files. | default: `${cwd}/acm-data/data`
-* *snapshot_base* - Dir to store snapshot config files. | default: `${cwd}/acm-data/snapshot`
-* *app_name* - Client app identifier. | default `ACM-SDK-Python`
+
+#### Extra Options
+Extra option can be set by `set_options`, as following:
+
+```
+client.set_options({key}={value})
+```
+
+Configurable options are:
+
+* *default_timeout* - Default timeout for get config from server in seconds.
+* *tls_enabled* - Whether to use https.
+* *auth_enabled* - Whether to use auth features.
+* *cai_enabled* - Whether to use address server.
+* *pulling_timeout* - Long polling timeout in seconds.
+* *pulling_config_size* - Max config items number listened by one polling process.
+* *callback_thread_num* - Concurrency for invoking callback.
+* *failover_base* - Dir to store failover config files.
+* *snapshot_base* - Dir to store snapshot config files.
+* *app_name* - Client app identifier.
 
 ## API Reference
  
@@ -87,7 +95,6 @@ client = ACMClient(endpoint, namespace, ak, sk, default_timeout, tls_enabled, au
 * `param` *timeout* Timeout for requesting server in seconds.
 * `return` 
 
-***
 Get value of one config item following priority:
 
 * Step 1 - Get from local failover dir(default: `${cwd}/acm/data`).
@@ -107,7 +114,6 @@ Get value of one config item following priority:
 * `param` *cb_list* List of callback functions to add.
 * `return`
 
-***
 Add watchers to a specified config item.
 * Once changes or deletion of the item happened, callback functions will be invoked.
 * If the item is already exists in server, callback functions will be invoked for once.
@@ -123,11 +129,19 @@ Add watchers to a specified config item.
 * `param` *remove_all* Whether to remove all occurrence of the callback or just once.
 * `return`
 
-***
 Remove watcher from specified key.
+
+## Debugging Mode
+Debugging mode if useful for getting more detailed log on console.
+
+Debugging mode can be set by:
+```
+ACMClient.set_debugging()
+# only effective within the current process
+```
 
 ## Other Resources
 
-* Alibaba ACM homepage: https://www.aliyun.com/product/acm
+* Alibaba Cloud ACM homepage: https://www.aliyun.com/product/acm
 
 
