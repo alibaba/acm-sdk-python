@@ -1,3 +1,5 @@
+# -*- coding: utf8 -*-
+
 from __future__ import print_function
 import unittest
 import acm
@@ -7,9 +9,9 @@ import shutil
 
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "**********"
-AK = "**********"
-SK = "**********"
+NAMESPACE = "***********"
+AK = "***********"
+SK = "***********"
 
 
 class TestClient(unittest.TestCase):
@@ -27,7 +29,6 @@ class TestClient(unittest.TestCase):
         self.assertIsNone(c3.get_server())
 
     def test_get_server_no_cai(self):
-        acm.ACMClient.set_debugging()
         c = acm.ACMClient("11.162.248.130:8080")
         c.set_options(cai_enabled=False)
         data_id = "com.alibaba"
@@ -84,7 +85,7 @@ class TestClient(unittest.TestCase):
         class Share:
             content = None
             count = 0
-        cache_key = "+".join([data_id, group, "DEFAULT_TENANT"])
+        cache_key = "+".join([data_id, group, ""])
 
         def test_cb(args):
             print(args)
@@ -138,11 +139,12 @@ class TestClient(unittest.TestCase):
 
         def cb(x):
             Share.content = x["content"]
+            print(Share.content)
         # test common
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
         c.add_watcher(data_id, group, cb)
-        time.sleep(1)
+        time.sleep(10)
         self.assertIsNotNone(Share.content)
 
     def test_get_from_failover(self):
@@ -163,3 +165,16 @@ class TestClient(unittest.TestCase):
         files.save_file(c.snapshot_base, key, "yyy")
         self.assertEqual(c.get(data_id, group), "yyy")
         shutil.rmtree(c.snapshot_base)
+
+    def test_file(self):
+        a = "中文 测试 abc"
+        data_id = "com.alibaba.cloud.acm:sample-app.properties"
+        group = "group"
+        key = "+".join([data_id, group, NAMESPACE])
+        files.delete_file(acm.DEFAULTS["SNAPSHOT_BASE"], key)
+        files.save_file(acm.DEFAULTS["SNAPSHOT_BASE"], key, a)
+        self.assertEqual(a, files.read_file(acm.DEFAULTS["SNAPSHOT_BASE"], key))
+
+
+
+

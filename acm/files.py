@@ -34,9 +34,10 @@ def save_file(base, key, content):
             logger.warning("[save-file] dir %s is already exist" % base)
 
     try:
-        with open(file_path, "w") as f:
+        with open(file_path, "wb") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(content)
+            f.write(content if type(content) == bytes else content.encode("utf8"))
+
     except OSError:
         logger.exception("[save-file] save file failed, file path:%s" % file_path)
 

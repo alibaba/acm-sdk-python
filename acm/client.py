@@ -31,17 +31,17 @@ from .files import read_file, save_file, delete_file
 logger = logging.getLogger("acm")
 
 DEBUG = False
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
-WORD_SEPARATOR = bytes([2]).decode()
-LINE_SEPARATOR = bytes([1]).decode()
+DEFAULT_NAMESPACE = ""
+
+WORD_SEPARATOR = u'\x02'
+LINE_SEPARATOR = u'\x01'
 
 DEFAULTS = {
     "APP_NAME": "ACM-SDK-Python",
     "TIMEOUT": 3,  # in seconds
-    "GROUP": "DEFAULT_GROUP",
-    "NAMESPACE": "DEFAULT_TENANT",
     "PULLING_TIMEOUT": 30,  # in seconds
     "PULLING_CONFIG_SIZE": 3000,
     "CALLBACK_THREAD_NUM": 10,
@@ -74,7 +74,15 @@ def process_common_params(data_id, group):
 def parse_pulling_result(result):
     if not result:
         return list()
-    return [i.split(WORD_SEPARATOR) for i in unquote_plus(result.decode(), "utf8").split(LINE_SEPARATOR) if i.strip()]
+    ret = list()
+    for i in unquote_plus(result.decode()).split(LINE_SEPARATOR):
+        if not i.strip():
+            continue
+        sp = i.split(WORD_SEPARATOR)
+        if len(sp) < 3:
+            sp.append("")
+        ret.append(sp)
+    return ret
 
 
 class WatcherWrap:
@@ -89,7 +97,8 @@ class CacheData:
         self.key = key
         local_value = read_file(client.failover_base, key) or read_file(client.snapshot_base, key)
         self.content = local_value
-        self.md5 = hashlib.md5(local_value.encode()).hexdigest() if local_value else None
+        src = local_value.decode("utf8") if type(local_value) == bytes else local_value
+        self.md5 = hashlib.md5(src.encode("GBK")).hexdigest() if src else None
         self.is_init = True
         if not self.md5:
             logger.debug("[init-cache] cache for %s does not have local value" % key)
@@ -117,7 +126,7 @@ class ACMClient:
 
     def __init__(self, endpoint, namespace=None, ak=None, sk=None, ):
         self.endpoint = endpoint
-        self.namespace = namespace or DEFAULTS["NAMESPACE"]
+        self.namespace = namespace or DEFAULT_NAMESPACE or ""
         self.ak = ak
         self.sk = sk
 
@@ -154,7 +163,7 @@ class ACMClient:
                 continue
 
             logger.debug("[set_options] key:%s, value:%s" % (k, v))
-            self.__setattr__(k, v)
+            setattr(self, k, v)
 
     def _refresh_server_list(self):
         with self.server_list_lock:
@@ -232,8 +241,9 @@ class ACMClient:
         params = {
             "dataId": data_id,
             "group": group,
-            "tenant": self.namespace
         }
+        if self.namespace:
+            params["tenant"] = self.namespace
 
         cache_key = group_key(data_id, group, self.namespace)
         # get from failover
@@ -248,11 +258,6 @@ class ACMClient:
         try:
             resp = self._do_sync_req("/diamond-server/config.co", None, params, None, timeout or self.default_timeout)
             content = resp.read().decode("GBK")
-            logger.info(
-                "[get-config] content from server:%s, data_id:%s, group:%s, namespace:%s, try to save snapshot" % (
-                    truncate(content), data_id, group, self.namespace))
-            save_file(self.snapshot_base, cache_key, content)
-            return content
         except HTTPError as e:
             if e.code == HTTPStatus.NOT_FOUND:
                 logger.warning(
@@ -275,6 +280,17 @@ class ACMClient:
             logger.error("[get-config] acm exception: %s" % str(e))
         except Exception as e:
             logger.exception("[get-config] exception %s occur" % str(e))
+
+        if content is not None:
+            logger.info(
+                "[get-config] content from server:%s, data_id:%s, group:%s, namespace:%s, try to save snapshot" % (
+                    truncate(content), data_id, group, self.namespace))
+            try:
+                save_file(self.snapshot_base, cache_key, content)
+            except Exception as e:
+                logger.exception("[get-config] save snapshot failed for %s, data_id:%s, group:%s, namespace:%s" % (
+                    data_id, group, self.namespace, str(e)))
+            return content
 
         logger.error("[get-config] get config from server failed, try snapshot, data_id:%s, group:%s, namespace:%s" % (
             data_id, group, self.namespace))
@@ -476,8 +492,9 @@ class ACMClient:
                 if cache_key in changed_keys:
                     data_id, group, namespace = parse_key(cache_key)
                     content = self.get(data_id, group)
-                    md5 = hashlib.md5(content.encode()).hexdigest() if content is not None else None
+                    md5 = hashlib.md5(content.encode("GBK")).hexdigest() if content is not None else None
                     cache_data.md5 = md5
+                    cache_data.content = content
                 queue.put((cache_key, cache_data.content, cache_data.md5))
 
     @synchronized_with_attr("pulling_lock")
