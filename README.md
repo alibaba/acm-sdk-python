@@ -17,11 +17,12 @@ Python SDK for ACM.
 
 ### Supported Python：
 
-1. Python 2.7
-2. Python 3.3
-3. Python 3.4
-4. Python 3.5
-5. Python 3.6
+1. Python 2.6
+2. Python 2.7
+3. Python 3.3
+4. Python 3.4
+5. Python 3.5
+6. Python 3.6
 
 ### Supported ACM version
 1. ACM 1.0
@@ -29,8 +30,21 @@ Python SDK for ACM.
 ### Change Logs
 
 ## Installation
+
+For Python 2.7 and above:
 ```shell
 pip install acm-sdk-python
+```
+
+For Python 2.6:
+```shell
+# install setuptools first:
+wget https://pypi.io/packages/source/s/setuptools/setuptools-33.1.1.zip
+unzip setuptools-33.1.1.zip
+cd setuptools-33.1.1 && sudo python setup.py install
+
+# if setuptools already exists:
+sudo easy_install acm-sdk-python
 ```
 
 ## Getting Started

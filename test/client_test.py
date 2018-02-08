@@ -19,40 +19,41 @@ class TestClient(unittest.TestCase):
     def test_get_server(self):
         acm.ACMClient.set_debugging()
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
-        self.assertIsInstance(c.get_server(), tuple)
+        self.assertEqual(type(c.get_server()), tuple)
 
     def test_get_server_err(self):
         c2 = acm.ACMClient("100.100.84.215:8080")
-        self.assertIsNone(c2.get_server())
+        self.assertEqual(c2.get_server(), None)
 
         c3 = acm.ACMClient("10.101.84.215:8081")
-        self.assertIsNone(c3.get_server())
+        self.assertEqual(c3.get_server(), None)
 
     def test_get_server_no_cai(self):
         c = acm.ACMClient("11.162.248.130:8080")
         c.set_options(cai_enabled=False)
         data_id = "com.alibaba"
         group = ""
-        self.assertIsNone(c.get(data_id, group))
+        self.assertEqual(c.get(data_id, group), None)
 
     def test_get_key(self):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
-        self.assertIsNotNone(c.get(data_id, group))
+        print(c.get(data_id, group))
+        self.assertNotEqual(c.get(data_id, group), None)
 
     def test_no_auth(self):
         c = acm.ACMClient("jmenv.tbsite.net:8080")
         data_id = "com.alibaba"
         group = ""
-        self.assertIsNone(c.get(data_id, group))
+        self.assertEqual(c.get(data_id, group), None)
 
     def test_tls(self):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         c.set_options(tls_enabled=True)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
-        self.assertIsNotNone(c.get(data_id, group))
+        self.assertNotEqual(c.get(data_id, group), None)
 
     def test_server_failover(self):
         acm.ACMClient.set_debugging()
@@ -61,7 +62,7 @@ class TestClient(unittest.TestCase):
         c.current_server = ("1.100.84.215", 8080, True)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
-        self.assertIsNotNone(c.get(data_id, group))
+        self.assertNotEqual(c.get(data_id, group), None)
 
     def test_server_failover_comp(self):
         acm.ACMClient.set_debugging()
@@ -72,11 +73,11 @@ class TestClient(unittest.TestCase):
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
         shutil.rmtree(c.snapshot_base, True)
-        self.assertIsNone(c.get(data_id, group))
+        self.assertEqual(c.get(data_id, group), None)
 
         time.sleep(31)
         shutil.rmtree(c.snapshot_base, True)
-        self.assertIsNotNone(c.get(data_id, group))
+        self.assertNotEqual(c.get(data_id, group), None)
 
     def test_fake_watcher(self):
         data_id = "com.alibaba"
@@ -132,6 +133,7 @@ class TestClient(unittest.TestCase):
         self.assertEqual(Share.count, 0)
 
     def test_long_pulling(self):
+        acm.ACMClient.set_debugging()
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
 
         class Share:
@@ -145,7 +147,7 @@ class TestClient(unittest.TestCase):
         group = "group"
         c.add_watcher(data_id, group, cb)
         time.sleep(10)
-        self.assertIsNotNone(Share.content)
+        self.assertNotEqual(Share.content, None)
 
     def test_get_from_failover(self):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
@@ -175,6 +177,14 @@ class TestClient(unittest.TestCase):
         files.save_file(acm.DEFAULTS["SNAPSHOT_BASE"], key, a)
         self.assertEqual(a, files.read_file(acm.DEFAULTS["SNAPSHOT_BASE"], key))
 
+    def test_publish(self):
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        data_id = "com.alibaba.cloud.acm:sample-app.properties"
+        group = "group"
+        content = "test"
+        c._publish(data_id,group,content)
 
 
+if __name__ == '__main__':
+    unittest.main()
 

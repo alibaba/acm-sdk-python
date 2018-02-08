@@ -5,6 +5,7 @@ import logging
 import socket
 import time
 import ssl
+import sys
 
 from multiprocessing import Process, Manager, Queue, pool
 from threading import RLock, Thread
@@ -31,7 +32,7 @@ from .files import read_file, save_file, delete_file
 logger = logging.getLogger("acm")
 
 DEBUG = False
-VERSION = "0.1.9"
+VERSION = "0.2.0"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -49,8 +50,9 @@ DEFAULTS = {
     "SNAPSHOT_BASE": "acm-data/snapshot"
 }
 
-OPTIONS = {"default_timeout", "tls_enabled", "auth_enabled", "cai_enabled", "pulling_timeout", "pulling_config_size",
-           "callback_thread_num", "failover_base", "snapshot_base", "app_name"}
+OPTIONS = set(
+    ["default_timeout", "tls_enabled", "auth_enabled", "cai_enabled", "pulling_timeout", "pulling_config_size",
+     "callback_thread_num", "failover_base", "snapshot_base", "app_name"])
 
 
 class ACMException(Exception):
@@ -215,6 +217,30 @@ class ACMClient:
 
         logger.info("[get-server] use server:%s" % str(self.current_server))
         return self.current_server
+
+    def _publish(self, data_id, group, content, timeout=None):
+        # todo publish API
+        if content is None:
+            raise ACMException("Can not publish none, use remove instead.")
+
+        data_id, group = process_common_params(data_id, group)
+        logger.info("[publish] data_id:%s, group:%s, namespace:%s, content:%s, timeout:%s" % (
+            data_id, group, self.namespace, truncate(content), timeout))
+
+        params = {
+            "dataId": data_id,
+            "group": group,
+            "content": content,
+        }
+        if self.namespace:
+            params["tenant"] = self.namespace
+        try:
+            data = urlencode(params, encoding="GBK").encode()
+            resp = self._do_sync_req("/diamond-server/basestone.do?method=syncUpdateAll", None, None, data,
+                                     timeout or self.default_timeout)
+            d = resp.read()
+        except:
+            logger.exception("xxx")
 
     def get(self, data_id, group, timeout=None):
         """Get value of one config item.
@@ -416,19 +442,25 @@ class ACMClient:
                 address, port, is_ip_address = server_info
                 server = ":".join([address, str(port)])
                 # if tls is enabled and server address is in ip, turn off verification
-                if self.tls_enabled and is_ip_address:
-                    context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-                    context.check_hostname = False
-                else:
-                    context = None
+
                 server_url = "%s://%s" % ("https" if self.tls_enabled else "http", server)
                 req = Request(url=server_url + url, data=data, headers=all_headers)
-                resp = urlopen(req, timeout=timeout, context=context)
+
+                # for python2.6 compatibility
+                if sys.version_info[0] == 2 and sys.version_info[1] == 6:
+                    resp = urlopen(req, timeout=timeout)
+                else:
+                    if self.tls_enabled and is_ip_address:
+                        context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+                        context.check_hostname = False
+                    else:
+                        context = None
+                    resp = urlopen(req, timeout=timeout, context=context)
                 logger.debug("[do-sync-req] info from server:%s" % server)
                 return resp
             except HTTPError as e:
-                if e.code in {HTTPStatus.INTERNAL_SERVER_ERROR, HTTPStatus.BAD_GATEWAY,
-                              HTTPStatus.SERVICE_UNAVAILABLE}:
+                if e.code in [HTTPStatus.INTERNAL_SERVER_ERROR, HTTPStatus.BAD_GATEWAY,
+                              HTTPStatus.SERVICE_UNAVAILABLE]:
                     logger.warning("[do-sync-req] server:%s is not available for reason:%s" % (server, e.msg))
                 else:
                     raise
@@ -480,7 +512,7 @@ class ACMClient:
             changed_keys = list()
             try:
                 resp = self._do_sync_req("/diamond-server/config.co", headers, None, data, self.pulling_timeout + 10)
-                changed_keys = {group_key(*i) for i in parse_pulling_result(resp.read())}
+                changed_keys = [group_key(*i) for i in parse_pulling_result(resp.read())]
                 logger.debug("[do-pulling] following keys are changed from server %s" % truncate(str(changed_keys)))
             except ACMException as e:
                 logger.error("[do-pulling] acm exception: %s" % str(e))
