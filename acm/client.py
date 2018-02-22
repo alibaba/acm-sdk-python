@@ -6,6 +6,7 @@ import socket
 import time
 import ssl
 import sys
+import json
 
 from multiprocessing import Process, Manager, Queue, pool
 from threading import RLock, Thread
@@ -29,10 +30,11 @@ from .params import group_key, parse_key, is_valid
 from .server import get_server_list
 from .files import read_file, save_file, delete_file
 
-logger = logging.getLogger("acm")
+logging.basicConfig()
+logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -120,6 +122,7 @@ class ACMClient:
     def set_debugging():
         if not ACMClient.debug:
             global logger
+            logger = logging.getLogger("acm")
             handler = logging.StreamHandler()
             handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(message)s"))
             logger.addHandler(handler)
@@ -218,47 +221,107 @@ class ACMClient:
         logger.info("[get-server] use server:%s" % str(self.current_server))
         return self.current_server
 
-    def _publish(self, data_id, group, content, timeout=None):
-        # todo publish API
-        if content is None:
-            raise ACMException("Can not publish none, use remove instead.")
+    def remove(self, data_id, group, timeout=None):
+        """ Remove one data item from ACM.
 
+        :param data_id: dataId.
+        :param group: group, use "DEFAULT_GROUP" if no group specified.
+        :param timeout: timeout for requesting server in seconds.
+        :return:
+        """
         data_id, group = process_common_params(data_id, group)
-        logger.info("[publish] data_id:%s, group:%s, namespace:%s, content:%s, timeout:%s" % (
-            data_id, group, self.namespace, truncate(content), timeout))
+        logger.info(
+            "[remove] data_id:%s, group:%s, namespace:%s, timeout:%s" % (data_id, group, self.namespace, timeout))
 
         params = {
             "dataId": data_id,
             "group": group,
-            "content": content,
         }
         if self.namespace:
             params["tenant"] = self.namespace
+
         try:
-            data = urlencode(params, encoding="GBK").encode()
-            resp = self._do_sync_req("/diamond-server/basestone.do?method=syncUpdateAll", None, None, data,
+            resp = self._do_sync_req("/diamond-server/datum.do?method=deleteAllDatums", None, None, params,
                                      timeout or self.default_timeout)
-            d = resp.read()
-        except:
-            logger.exception("xxx")
+            logger.info("[remove] success to remove group:%s, data_id:%s, server response:%s" % (
+                group, data_id, resp.read()))
+        except HTTPError as e:
+            if e.code == HTTPStatus.FORBIDDEN:
+                logger.error(
+                    "[remove] no right for namespace:%s, group:%s, data_id:%s" % (self.namespace, group, data_id))
+                raise ACMException("Insufficient privilege.")
+            else:
+                logger.error("[remove] error code [:%s] for namespace:%s, group:%s, data_id:%s" % (
+                    e.code, self.namespace, group, data_id))
+        except ACMException as e:
+            logger.error("[remove] acm exception: %s" % str(e))
+        except Exception as e:
+            logger.exception("[remove] exception %s occur" % str(e))
+
+    def publish(self, data_id, group, content, timeout=None):
+        """ Publish one data item to ACM.
+
+        If the data key is not exist, create one first.
+        If the data key is exist, update to the content specified.
+        Content can not be set to None, if there is need to delete config item, use function **remove** instead.
+
+        :param data_id: dataId.
+        :param group: group, use "DEFAULT_GROUP" if no group specified.
+        :param content: content of the data item.
+        :param timeout: timeout for requesting server in seconds.
+        :return:
+        """
+        if content is None:
+            raise ACMException("Can not publish none content, use remove instead.")
+
+        data_id, group = process_common_params(data_id, group)
+        logger.info("[publish] data_id:%s, group:%s, namespace:%s, content:%s, timeout:%s" % (
+            data_id, group, self.namespace, truncate(content), timeout))
+        if type(content) == bytes:
+            content = content.decode("utf-8")
+        params = {
+            "dataId": data_id,
+            "group": group,
+            "content": content.encode("GBK"),
+        }
+        if self.namespace:
+            params["tenant"] = self.namespace
+
+        try:
+            resp = self._do_sync_req("/diamond-server/basestone.do?method=syncUpdateAll", None, None, params,
+                                     timeout or self.default_timeout)
+            logger.info("[publish] success to publish content, group:%s, data_id:%s, server response:%s" % (
+                group, data_id, resp.read()))
+        except HTTPError as e:
+            if e.code == HTTPStatus.FORBIDDEN:
+                logger.error(
+                    "[publish] no right for namespace:%s, group:%s, data_id:%s" % (self.namespace, group, data_id))
+                raise ACMException("Insufficient privilege.")
+            else:
+                logger.error("[publish] error code [:%s] for namespace:%s, group:%s, data_id:%s" % (
+                    e.code, self.namespace, group, data_id))
+        except ACMException as e:
+            logger.error("[publish] acm exception: %s" % str(e))
+        except Exception as e:
+            logger.exception("[publish] exception %s occur" % str(e))
 
     def get(self, data_id, group, timeout=None):
         """Get value of one config item.
 
-        query priority:
-        1.  get from local failover dir(default: "{cwd}/acm/data")
-            failover dir can be manually copied from snapshot dir(default: "{cwd}/acm/snapshot") in advance
-            this helps to suppress the effect of known server failure
+        Query priority:
+        1.  Get from local failover dir(default: "{cwd}/acm/data").
+            Failover dir can be manually copied from snapshot dir(default: "{cwd}/acm/snapshot") in advance.
+            This helps to suppress the effect of known server failure.
 
-        2.  get from one server until value is got or all servers tried
-            content will be save to snapshot dir
+        2.  Get from one server until value is got or all servers tried.
+            Content will be save to snapshot dir.
 
-        3.  get from snapshot dir
+        3.  Get from snapshot dir.
 
-        :param data_id: dataId
-        :param group: group, use "DEFAULT_GROUP" if no group specified
-        :param timeout: timeout for requesting server in seconds
-        :return: value
+        :param data_id: dataId.
+        :param group: group, use "DEFAULT_GROUP" if no group specified.
+        :param timeout: timeout for requesting server in seconds.
+        :return: value.
         """
         data_id, group = process_common_params(data_id, group)
         logger.info("[get-config] data_id:%s, group:%s, namespace:%s, timeout:%s" % (
@@ -327,6 +390,72 @@ class ACMClient:
             logger.debug("[get-config] get %s from snapshot directory, content is %s" % (cache_key, truncate(content)))
             return content
 
+    def list(self, page=1, size=200):
+        """ Get config items of current namespace with content included.
+
+        Data is directly from acm server.
+
+        :param page: which page to query, starts from 1.
+        :param size: page size.
+        :return:
+        """
+        logger.info("[list] try to list namespace:%s" % self.namespace)
+
+        params = {
+            "pageNo": page,
+            "pageSize": size,
+            "method": "getAllConfigInfoByTenant",
+        }
+
+        if self.namespace:
+            params["tenant"] = self.namespace
+
+        try:
+            resp = self._do_sync_req("/diamond-server/basestone.do", None, params, None, self.default_timeout)
+            d = resp.read()
+            return json.loads(d)
+        except HTTPError as e:
+            if e.code == HTTPStatus.FORBIDDEN:
+                logger.error("[list] no right for namespace:%s" % self.namespace)
+                raise ACMException("Insufficient privilege.")
+            else:
+                logger.error("[list] error code [:%s] for namespace:%s" % (e.code, self.namespace))
+        except ACMException as e:
+            logger.error("[list] acm exception: %s" % str(e))
+        except Exception as e:
+            logger.exception("[list] exception %s occur" % str(e))
+
+        return None
+
+    def list_all(self, group=None, prefix=None):
+        """ Get all config items of current namespace, with content included.
+
+        Warning: If there are lots of config in namespace, this function may cost some time.
+
+        :param group: only dataIds with group match shall be returned.
+        :param prefix: only dataIds startswith prefix shall be returned **it's case sensitive**.
+        :return:
+        """
+        logger.info("[list-all] namespace:%s, group:%s, prefix:%s" % (self.namespace, group, prefix))
+
+        def _matches(ori):
+            return (group is None or ori["group"] == group) and (prefix is None or ori["dataId"].startswith(prefix))
+
+        result = self.list(1, 200)
+        if not result:
+            logger.warning("[list-all] can not get config items of %s" % self.namespace)
+            return list()
+
+        ret_list = [{"dataId": i["dataId"], "group": i["group"]} for i in result["pageItems"] if _matches(i)]
+        pages = result["pagesAvailable"]
+        logger.debug("[list-all] %s items got from acm server" % result["totalCount"])
+
+        for i in range(2, pages + 1):
+            result = self.list(i, 200)
+            ret_list += [{"dataId": j["dataId"], "group": j["group"]} for j in result["pageItems"] if _matches(j)]
+        logger.debug("[list-all] %s items returned" % len(ret_list))
+        return ret_list
+
     @synchronized_with_attr("pulling_lock")
     def add_watcher(self, data_id, group, cb):
         self.add_watchers(data_id, group, [cb])
@@ -335,13 +464,13 @@ class ACMClient:
     def add_watchers(self, data_id, group, cb_list):
         """Add watchers to specified item.
 
-        1.  callback is invoked from current process concurrently by thread pool
-        2.  callback is invoked at once if the item exists
-        3.  callback is invoked if changes or deletion detected on the item
+        1.  Callback is invoked from current process concurrently by thread pool.
+        2.  Callback is invoked at once if the item exists.
+        3.  Callback is invoked if changes or deletion detected on the item.
 
-        :param data_id: data_id
-        :param group: group, use "DEFAULT_GROUP" if no group specified
-        :param cb_list: callback functions
+        :param data_id: dataId.
+        :param group: group, use "DEFAULT_GROUP" if no group specified.
+        :param cb_list: callback functions.
         :return:
         """
         if not cb_list:
@@ -383,12 +512,12 @@ class ACMClient:
 
     @synchronized_with_attr("pulling_lock")
     def remove_watcher(self, data_id, group, cb, remove_all=False):
-        """Remove watcher from specified key
+        """Remove watcher from specified key.
 
-        :param data_id: data_id
-        :param group: group, use "DEFAULT_GROUP" if no group specified
-        :param cb: callback function
-        :param remove_all: weather to remove all occurrence of the callback or just once
+        :param data_id: dataId.
+        :param group: group, use "DEFAULT_GROUP" if no group specified.
+        :param cb: callback function.
+        :param remove_all: weather to remove all occurrence of the callback or just once.
         :return:
         """
         if not cb:
@@ -426,7 +555,7 @@ class ACMClient:
 
     def _do_sync_req(self, url, headers=None, params=None, data=None, timeout=None):
         url = "?".join([url, urlencode(params)]) if params else url
-        all_headers = self._get_common_headers(params)
+        all_headers = self._get_common_headers(params, data)
         if headers:
             all_headers.update(headers)
         logger.debug(
@@ -444,7 +573,8 @@ class ACMClient:
                 # if tls is enabled and server address is in ip, turn off verification
 
                 server_url = "%s://%s" % ("https" if self.tls_enabled else "http", server)
-                req = Request(url=server_url + url, data=data, headers=all_headers)
+                req = Request(url=server_url + url, data=urlencode(data).encode() if data else None,
+                              headers=all_headers)
 
                 # for python2.6 compatibility
                 if sys.version_info[0] == 2 and sys.version_info[1] == 6:
@@ -507,7 +637,7 @@ class ACMClient:
             if contains_init_key:
                 headers["longPullingNoHangUp"] = "true"
 
-            data = urlencode({"Probe-Modify-Request": probe_update_string}).encode()
+            data = {"Probe-Modify-Request": probe_update_string}
 
             changed_keys = list()
             try:
@@ -570,13 +700,15 @@ class ACMClient:
                             str(e), watcher.callback.__name__))
                     watcher.last_md5 = md5
 
-    def _get_common_headers(self, params):
+    def _get_common_headers(self, params, data):
         headers = {
             "Diamond-Client-AppName": self.app_name,
             "Client-Version": VERSION,
-            "Content-Type": "application/x-www-form-urlencoded; charset=GBK",
             "exConfigInfo": "true",
         }
+        if data:
+            headers["Content-Type"] = "application/x-www-form-urlencoded; charset=GBK"
+
         if self.auth_enabled:
             ts = str(int(time.time() * 1000))
             headers.update({
@@ -585,13 +717,17 @@ class ACMClient:
             })
             sign_str = ""
             # in case tenant or group is null
-            if not params:
+            if not params and not data:
                 return headers
 
-            if "tenant" in params:
-                sign_str = params["tenant"] + "+"
-            if "group" in params:
-                sign_str = sign_str + params["group"] + "+"
+            tenant = (params and params.get("tenant")) or (data and data.get("tenant"))
+            group = (params and params.get("group")) or (data and data.get("group"))
+
+            if tenant:
+                sign_str = tenant + "+"
+            if group:
+                sign_str = sign_str + group + "+"
+
             if sign_str:
                 sign_str += ts
                 headers["Spas-Signature"] = base64.encodebytes(

@@ -18,4 +18,7 @@ setup(
     description="Python client for ACM.",
     long_description=long_description,
     install_requires=[],
+    entry_points={
+      "console_scripts": ["acm=acm.command:main"],
+    },
 )
