@@ -32,6 +32,9 @@ def get_server_list(endpoint, default_port=8080, cai_enabled=True):
         content = endpoint.encode()
     else:
         try:
+            # use 8080 as default port.
+            if ":" not in endpoint:
+                endpoint = endpoint + ":8080"
             content = urlopen(ADDRESS_URL_PTN % endpoint, timeout=ADDRESS_SERVER_TIMEOUT).read()
             logger.debug("[get-server-list] content from endpoint:%s" % content)
         except (URLError, OSError, socket.timeout) as e:

@@ -34,7 +34,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.0"
+VERSION = "0.3.3"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -305,7 +305,7 @@ class ACMClient:
         except Exception as e:
             logger.exception("[publish] exception %s occur" % str(e))
 
-    def get(self, data_id, group, timeout=None):
+    def get(self, data_id, group, timeout=None, no_snapshot=False):
         """Get value of one config item.
 
         Query priority:
@@ -321,6 +321,7 @@ class ACMClient:
         :param data_id: dataId.
         :param group: group, use "DEFAULT_GROUP" if no group specified.
         :param timeout: timeout for requesting server in seconds.
+        :param no_snapshot: do not save snapshot.
         :return: value.
         """
         data_id, group = process_common_params(data_id, group)
@@ -369,6 +370,9 @@ class ACMClient:
             logger.error("[get-config] acm exception: %s" % str(e))
         except Exception as e:
             logger.exception("[get-config] exception %s occur" % str(e))
+
+        if no_snapshot:
+            return content
 
         if content is not None:
             logger.info(

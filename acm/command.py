@@ -2,16 +2,29 @@ import os.path
 import sys
 import json
 import fcntl
-import argparse
 import shutil
+import gettext
+from datetime import datetime
 from acm import ACMClient, DEFAULT_GROUP_NAME
 
+# override the default expression of "positional arguments"
+def translate_patch(msg):
+    return "required arguments" if msg == "positional arguments" else msg
+
+
+gettext.gettext=translate_patch
+
+import argparse
+###
+
+DEFAULT_ENDPOINT = "acm.aliyun.com"
+DEFAULT_PORT = 8080
 CMD = set(["bind", "set", "use"])
 CONF = os.path.join(os.getenv("HOME"), ".acm.json")
 
 INIT_CONF = {
     "endpoints": {
-        "acm.aliyun.com:8080": {
+        DEFAULT_ENDPOINT: {
             "tls": False,
             "is_current": True,
             "namespaces": {
@@ -19,7 +32,8 @@ INIT_CONF = {
                     "is_current": True,
                     "ak": None,
                     "sk": None,
-                    "alias": "default"
+                    "alias": "default",
+                    "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
             }
         }
@@ -32,6 +46,7 @@ def _colored(txt, color="green"):
         "green": 32,
         "red": 31,
         "yellow": 33,
+        "grey": 30,
     }
 
     return "\033[1;%sm%s\033[0m" % (cm[color], txt)
@@ -97,96 +112,133 @@ def _set_current(config, endpoint, namespace=None):
     return config
 
 
-def bind(args):
-    config = read_config()
-    ep = args.endpoint
-    tls = args.tls
-    if ep not in config["endpoints"]:
-        config["endpoints"][ep] = {
-            "tls": tls,
-            "is_current": True,
-            "namespaces": {
-                "[default]": {
-                    "is_current": True,
-                    "ak": None,
-                    "sk": None,
-                    "alias": "default"
-                }
-            }
-        }
-        print(
-            "Binding to a new endpoint: %s, using TLS is %s.\n" % (_colored(ep, "yellow"), _colored(tls, "yellow")))
-    else:
-        config["endpoints"][ep]["tls"] = tls
-        print("Binding to endpoint: %s, using TLS is %s.\n" % (_colored(ep, "yellow"), _colored(tls, "yellow")))
-
-    config = _set_current(config, ep)
-    e, n = _get_current(config)
-    print("Current namespace: %s, alias: %s\n" % (
-        _colored(n, "green"), _colored(config["endpoints"][e]["namespaces"][n]["alias"])))
-
-    write_config(config)
-
-
 def add(args):
+    if ":" in args.namespace:
+        pos = args.namespace.index(":")
+        e = args.namespace[:pos]
+        ns = args.namespace[pos + 1:]
+    else:
+        e = DEFAULT_ENDPOINT
+        ns = args.namespace
+    tls = args.tls
     config = read_config()
-    ns = args.namespace
     ak = args.ak
     sk = args.sk
     alias = args.alias or ns
-    e, n = _get_current(config)
-    for k, v in config["endpoints"][e]["namespaces"].items():
-        if (v["alias"] == alias or k == alias) and k != ns:
-            print("Alias %s has been taken by %s, choose another one." % (_colored(alias, "red"), k))
-            sys.exit(1)
-    if ns in config["endpoints"][e]["namespaces"]:
-        config["endpoints"][e]["namespaces"][ns]["ak"] = ak
-        config["endpoints"][e]["namespaces"][ns]["sk"] = sk
-        config["endpoints"][e]["namespaces"][ns]["alias"] = alias
-        print("Namespace %s(%s) is already exist in %s, updating configs.\n" % (
-            _colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
-    else:
-        config["endpoints"][e]["namespaces"][ns] = {"ak": ak, "sk": sk, "alias": alias, "is_current": False}
+
+    if args.alias is not None and ":" in args.alias:
+        print('":" is invalid symbol in alias.')
+        sys.exit(1)
+
+    # detect alias, ensure unique globally
+    for ep, ep_info in config["endpoints"].items():
+        for k, v in ep_info["namespaces"].items():
+            if args.alias is None and v["alias"] == alias and k != ns:
+                alias = "-".join([e, ns])
+            elif v["alias"] == alias and k != ns:
+                print("Alias %s has been taken by %s:%s, choose another one." % (_colored(alias, "red"), ep, k))
+                sys.exit(1)
+
+    # new endpoint
+    if e not in config["endpoints"]:
+        config["endpoints"][e] = {
+            "tls": tls,
+            "is_current": False,
+            "namespaces": {}
+        }
         print(
-            "Add new namespace %s(%s) to %s.\n" %
-            (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
+                "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(tls, "yellow")))
+    else:
+        if config["endpoints"][e]["tls"] != tls:
+            config["endpoints"][e]["tls"] = tls
+            print("TLS attr of %s has changed to %s.\n" % (_colored(e, "yellow"), _colored(tls, "yellow")))
+
+    if ns in config["endpoints"][e]["namespaces"]:
+        if ak is not None:
+            config["endpoints"][e]["namespaces"][ns]["ak"] = ak
+        if sk is not None:
+            config["endpoints"][e]["namespaces"][ns]["sk"] = sk
+        if args.alias is not None:
+            config["endpoints"][e]["namespaces"][ns]["alias"] = alias
+        config["endpoints"][e]["namespaces"][ns]["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print("Namespace %s is already exist in %s, updating configs.\n" % (
+            _colored(ns, "green"), _colored(e, "yellow")))
+    else:
+        config["endpoints"][e]["namespaces"][ns] = {"ak": ak, "sk": sk, "alias": alias, "is_current": False,
+                                                    "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        print(
+                "Add new namespace %s(%s) to %s.\n" %
+                (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
+
     write_config(config)
+
+    try:
+        print("Try to access the namespace...")
+        c = ACMClient(endpoint=e, namespace=ns, ak=config["endpoints"][e]["namespaces"][ns]["ak"],
+                      sk=config["endpoints"][e]["namespaces"][ns]["sk"])
+        if config["endpoints"][e]["tls"]:
+            c.set_options(tls_enabled=True)
+        c.list(1, 1)
+        print("Namespace access succeed.")
+    except:
+        print(_colored("\nWarning: Access test failed, there may be mistakes in configuration.\n", "grey"))
 
 
 def use(args):
     config = read_config()
-    ns = args.namespace
-    e, n = _get_current(config)
-    for k, v in config["endpoints"][e]["namespaces"].items():
-        if v["alias"] == ns or k == ns:
-            _set_current(config, e, k)
-            print("Namespace changed to %s.\n" % _colored("%s(%s)" % (k, v["alias"]), "green"))
-            write_config(config)
+
+    if ":" in args.namespace:
+        pos = args.namespace.index(":")
+        e = args.namespace[:pos]
+        ns = args.namespace[pos + 1:]
+    else:
+        e = None
+        ns = None
+
+    found = False
+    # detect alias, ensure unique globally
+    for ep, ep_info in config["endpoints"].items():
+        for k, v in ep_info["namespaces"].items():
+            if v["alias"] == args.namespace or (k == ns and ep == e):
+                _set_current(config, ep, k)
+                print("Namespace changed to %s alias:%s.\n" % (
+                    _colored("%s:%s" % (ep, k), "green"), _colored(v["alias"], "green")))
+                write_config(config)
+                found = True
+                break
+        if found:
             break
     else:
-        print("No namespace named or aliased as %s, please check.\n" % _colored(ns, "red"))
+        print("No namespace named or aliased as %s, please check.\n" % _colored(args.namespace, "red"))
 
 
 def _process_namespace(args):
     config = read_config()
+
+    if args.namespace is not None:
+        if ":" in args.namespace:
+            pos = args.namespace.index(":")
+            e = args.namespace[:pos]
+            ns = args.namespace[pos + 1:]
+        else:
+            e = None
+            ns = None
+        for ep, ep_info in config["endpoints"].items():
+            for k, v in ep_info["namespaces"].items():
+                if v["alias"] == args.namespace or (k == ns and ep == e):
+                    return ep, ep_info, k, v
+        print("No namespace named or aliased as %s, please check.\n" % _colored(args.namespace, "red"))
+        sys.exit(1)
+
     e, n = _get_current(config)
-    ep = config["endpoints"][e]
-    n = args.namespace or n
-
-    alias = [i["alias"] for i in ep["namespaces"].values()]
-    if n in alias:
-        n = [k for k, v in ep["namespaces"].items() if v["alias"] == n][0]
-    else:
-        if n not in ep["namespaces"]:
-            print("Namespace: %s does not belong to current endpoint, check first." % _colored(n, "red"))
-            sys.exit(1)
-
-    return e, ep, n, ep["namespaces"][n]
+    return e, config["endpoints"][e], n, config["endpoints"][e]["namespaces"][n]
 
 
 def list_conf(args):
     e, ep, n, ns = _process_namespace(args)
     c = ACMClient(endpoint=e, namespace=n, ak=ns["ak"], sk=ns["sk"])
+    if ep["tls"]:
+        c.set_options(tls_enabled=True)
     configs = c.list_all(args.group, args.prefix)
     for i in sorted(configs, key=lambda x: x["group"] + x["dataId"]):
         print("%(group)s/%(dataId)s" % i)
@@ -221,9 +273,9 @@ def pull(args):
         c.set_options(tls_enabled=True)
     if "/" in args.data_id:
         g, d = args.data_id.split("/")
-        content = c.get(d, g)
+        content = c.get(d, g, no_snapshot=True)
     else:
-        content = c.get(args.data_id, None)
+        content = c.get(args.data_id, None, no_snapshot=True)
 
     if content is None:
         print("%s does not exist." % _colored(args.data_id, "red"))
@@ -290,13 +342,43 @@ def current(args):
 def show(args):
     config = read_config()
     e, n = _get_current(config)
-    print("ENDPOINTS\t\tNAMESPACES")
-    print("-" * 100)
+    max_ep = 10
+    max_ns = 10
+    max_alias = 10
+
+    table_header = ["", "ENDPOINT", "NAMESPACE_ID", "ALIAS", "UPDATED"]
+    table_data = list()
+
     for k, v in config["endpoints"].items():
-        print((_colored(k, "yellow") if e == k else k) + "\t" + ", ".join(
-            [_colored("%s(%s)" % (k2, v2["alias"]), "green") if n == k2 and e == k else
-             "%s(%s)" % (k2, v2["alias"]) for k2, v2 in v["namespaces"].items()]))
-    print("-" * 100 + "\n")
+        if len(k) > max_ep:
+            max_ep = len(k)
+        start = True
+        for k2, v2 in v["namespaces"].items():
+            if k == e and k2 == n:
+                row_data = ["*"]
+            else:
+                row_data = [""]
+            if start:
+                row_data.append(k)
+                start = False
+            else:
+                row_data.append(k)
+            if len(k2) > max_ns:
+                max_ns = len(k2)
+            if len(v2["alias"]) > max_alias:
+                max_alias = len(v2["alias"])
+            row_data.append(k2)
+            row_data.append(v2["alias"])
+            row_data.append(v2.get("updated", "None"))
+            table_data.append(row_data)
+    table_data = sorted(table_data, key=lambda x: x[4], reverse=True)
+    ptn = "%%-3s%%-%is%%-%is%%-%is%%-20s" % (max_ep + 5, max_ns + 5, max_alias + 5)
+    print(ptn % tuple(table_header))
+    print("-" * (max_ep + max_ns + max_alias + 38))
+    for row in table_data:
+        print(ptn % tuple(row))
+    print("-" * (max_ep + max_ns + max_alias + 38))
+    print("")
 
 
 def export(args):
@@ -384,7 +466,8 @@ def export(args):
         i += 1
         sys.stdout.write("\033[K\rExporting: %s/%s   %s:%s" % (i, len(configs), config["group"], config["dataId"]))
         sys.stdout.flush()
-        _write_file(os.path.join(d, rel_path, config["dataId"]), c.get(config["dataId"], config["group"]))
+        _write_file(os.path.join(d, rel_path, config["dataId"]),
+                    c.get(config["dataId"], config["group"], no_snapshot=True))
     print("")
     print("All dataIds exported.\n")
 
@@ -460,75 +543,71 @@ def arg_parse():
                                      description="ACM command line tools for querying and exporting data.", )
     subparsers = parser.add_subparsers(help='sub-command help', title="Sub commands")
 
-    # bind
-    parser_bind = subparsers.add_parser("bind", help="bind to an ACM endpoint",
-                                        description="Bind to an ACM endpoint, use [acm.aliyun.com:8080] as default.")
-    parser_bind.add_argument("endpoint", help="ACM endpoint to bind.")
-    parser_bind.add_argument("--tls", action="store_true", default=False, help="to use tls connection.")
-    parser_bind.set_defaults(func=bind)
-
     # add
     parser_add = subparsers.add_parser("add", help="add a namespace",
-                                       description="Add a namespace to current endpoint, "
-                                                   "update if namespace is already added.")
-    parser_add.add_argument("namespace", help='namespace to add.')
+                                       description='Add a namespace, '
+                                                   'update if namespace is already exist.',
+                                       epilog="Example: acm add acm.aliyun.com:ea61357b-d417-460c-92e4-032677dd8153 "
+                                              "-s 'GLff***xcao=' -a 654b43******e9750 -n foo")
+    parser_add.add_argument("namespace", default=None, help='use "endpoint:namespace_id" to locate a namespace, '
+                                                            'if endpoint is missing, "acm.aliyun.com" act as default.')
     parser_add.add_argument("-a", dest="ak", default=None, help='AccessKey of this namespace.')
     parser_add.add_argument("-s", dest="sk", help='SecretKey of this namespace.')
-    parser_add.add_argument("-n", dest="alias", help="alias of the endpoint.")
+    parser_add.add_argument("-n", dest="alias", help='alias of the namespace, ":" is not allowed in alias.')
+    parser_add.add_argument("--tls", action="store_true", default=False, help="to use tls connection.")
     parser_add.set_defaults(func=add)
 
     # use
     parser_use = subparsers.add_parser("use", help="switch to a namespace",
-                                       description="Switch to a namespace of current endpoint, "
-                                                   "if namespace is absent, add one.")
-    parser_use.add_argument("namespace", help='namespace or alias to use.')
-    parser_use.add_argument("-a", dest="ak", default=None, help='AccessKey of this namespace.')
-    parser_use.add_argument("-s", dest="sk", help='SecretKey of this namespace.')
-    parser_use.add_argument("-n", dest="alias", help="alias of the endpoint.")
+                                       description="Switch to a namespace.",
+                                       epilog="Example: acm use acm.aliyun.com:ea61357b-d417-460c-92e4-032677dd8153")
+    parser_use.add_argument("namespace", help='"endpoint:namespace_id" or alias to use.')
     parser_use.set_defaults(func=use)
 
     # current
-    parser_current = subparsers.add_parser("current", help="show current endpoint and namespace",
-                                           description="Show current endpoint and namespace.")
+    parser_current = subparsers.add_parser("current", help="show current namespace",
+                                           description="Show current namespace.")
     parser_current.set_defaults(func=current)
 
     # show
-    parser_show = subparsers.add_parser("show", help="show all endpoints and namespaces",
-                                        description="Show all endpoints and namespaces.")
+    parser_show = subparsers.add_parser("show", help="show all namespaces",
+                                        description="Show all namespaces.")
     parser_show.set_defaults(func=show)
 
     # list
     parser_list = subparsers.add_parser("list", help="get list of dataIds", description="Get list of dataIds.")
     parser_list.add_argument("-g", dest="group", default=None, help='group of the dataId.')
     parser_list.add_argument("-p", dest="prefix", default=None, help='prefix of dataId.')
-    parser_list.add_argument("-n", dest="namespace", default=None, help='name or alias of specified namespace.')
+    parser_list.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_list.set_defaults(func=list_conf)
 
     # pull
     parser_pull = subparsers.add_parser("pull", help="get one config content",
-                                        description="Get one config content from ACM server and save to local file.")
+                                        description="Get one config content from ACM server and save to local file.",
+                                        epilog="Example: acm pull group/dataId")
     parser_pull.add_argument("data_id", help='the dataId to pull, use group"/"dataId to specify group, '
                                              'if group is specified, file will be store under an subdir of group name.')
     parser_pull.add_argument("-f", dest="file", default=None, help="file to store the content, create one if absent.")
     parser_pull.add_argument("-o", action="store_true", dest="stdout", default=False, help="only print on console.")
-    parser_pull.add_argument("-n", dest="namespace", default=None, help="name or alias of specified namespace.")
+    parser_pull.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_pull.set_defaults(func=pull)
 
     # push
     parser_push = subparsers.add_parser("push", help="push one config",
-                                        description="Push one config with content of local file to ACM server.")
+                                        description="Push one config with content of local file to ACM server.",
+                                        epilog="Example: acm push dir/file")
     parser_push.add_argument("file", help="file to push, filename is use as dataId by default, "
                                           "if parent dir is attached, it will be use as group.")
     parser_push.add_argument("-d", dest="data_id", default=None, help='dataId to store the content, '
                                                                       'use group"/"dataId to specify group.')
-    parser_push.add_argument("-n", dest="namespace", default=None, help='name or alias of specified namespace.')
+    parser_push.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_push.set_defaults(func=push)
 
     # export
     parser_export = subparsers.add_parser("export", help="export dataIds to local files",
                                           description="Export dataIds of specified namespace to local files.")
     parser_export.add_argument("-d", dest="dir", default=None, help='export destination dir.')
-    parser_export.add_argument("-n", dest="namespace", default=None, help='name or alias of specified namespace.')
+    parser_export.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_export.add_argument("--delete", action="store_true", default=False,
                                help="delete the file not exist in ACM server (hidden files startswith . are igonred).")
     parser_export.add_argument("--force", action="store_true", default=False, help="run and delete silently.")
@@ -538,7 +617,7 @@ def arg_parse():
     parser_import = subparsers.add_parser("import", help="import files to ACM server",
                                           description="Import files to ACM server, using specified namespace.")
     parser_import.add_argument("-d", dest="dir", default=None, help='import source dir.')
-    parser_import.add_argument("-n", dest="namespace", default=None, help='name or alias of specified namespace.')
+    parser_import.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_import.add_argument("--delete", action="store_true", default=False,
                                help="delete the dataId not exist locally.")
     parser_import.add_argument("--force", action="store_true", default=False, help="run and delete silently.")
@@ -559,9 +638,8 @@ def main():
         acm <command> [params]
 
     Global Commands:
-        acm bind {endpoint} [--tls] # Bind to an ACM endpoint, not mandatory, use acm.aliyun.com:8080 as default.
-        acm add {namespace} [{ak} {sk}] [-a {alias}] # Add or update an namespace, not mandatory.
-        acm use {namespace}/{alias} # Choose a namespace for following commands (can be overwritten by -n).
+        acm add {endpoint}:{namespace_id} [-a {ak} -s {sk}] [-n {alias}] # Add or update an namespace, not mandatory.
+        acm use {endpoint}:{namespace}/{alias} # Choose a namespace for following commands (can be overwritten by -n).
         acm current # Print current endpoint and
         acm show # Print all endpoint and namespace info.
 
@@ -600,8 +678,8 @@ def main():
             +--------------+----------+------------------+
 
         Get started:
-            acm add '60*****0d38' '654b4*****50' 'GLf****ao=' -n dev
-            acm add '7u*****d9eb' '37ab8*****2b' 'XMV****xc=' -n product
+            acm add acm.aliyun.com:'60*****0d38' -a '654b4*****50' -s 'GLf****ao=' -n dev
+            acm add acm.aliyun.com:'7u*****d9eb' -a '37ab8*****2b' -s 'XMV****xc=' -n product
 
             acm use dev
 

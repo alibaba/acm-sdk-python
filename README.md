@@ -195,7 +195,6 @@ A CLI Tool is along with python SDK to make convenient access and management of 
 You can use `acm {subcommand}` directly after installation, sub commands available are as following:
 
 ```shell
-    bind                bind to an ACM endpoint
     add                 add a namespace
     use                 switch to a namespace
     current             show current endpoint and namespace
