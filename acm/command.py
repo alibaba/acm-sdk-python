@@ -7,14 +7,16 @@ import gettext
 from datetime import datetime
 from acm import ACMClient, DEFAULT_GROUP_NAME
 
+
 # override the default expression of "positional arguments"
 def translate_patch(msg):
     return "required arguments" if msg == "positional arguments" else msg
 
 
-gettext.gettext=translate_patch
+gettext.gettext = translate_patch
 
 import argparse
+
 ###
 
 DEFAULT_ENDPOINT = "acm.aliyun.com"
@@ -32,7 +34,7 @@ INIT_CONF = {
                     "is_current": True,
                     "ak": None,
                     "sk": None,
-                    "alias": "default",
+                    "alias": "[default]",
                     "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
             }
@@ -133,7 +135,7 @@ def add(args):
     # detect alias, ensure unique globally
     for ep, ep_info in config["endpoints"].items():
         for k, v in ep_info["namespaces"].items():
-            if args.alias is None and v["alias"] == alias and k != ns:
+            if args.alias is None and v["alias"] == alias and (k != ns or ep != e):
                 alias = "-".join([e, ns])
             elif v["alias"] == alias and k != ns:
                 print("Alias %s has been taken by %s:%s, choose another one." % (_colored(alias, "red"), ep, k))
@@ -174,7 +176,8 @@ def add(args):
 
     try:
         print("Try to access the namespace...")
-        c = ACMClient(endpoint=e, namespace=ns, ak=config["endpoints"][e]["namespaces"][ns]["ak"],
+        c = ACMClient(endpoint=e, namespace=(None if ns == "[default]" else ns),
+                      ak=config["endpoints"][e]["namespaces"][ns]["ak"],
                       sk=config["endpoints"][e]["namespaces"][ns]["sk"])
         if config["endpoints"][e]["tls"]:
             c.set_options(tls_enabled=True)
@@ -236,7 +239,7 @@ def _process_namespace(args):
 
 def list_conf(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=n, ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
     configs = c.list_all(args.group, args.prefix)
@@ -268,7 +271,7 @@ def _read_file(file):
 
 def pull(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=n, ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
     if "/" in args.data_id:
@@ -298,7 +301,7 @@ def pull(args):
 
 def push(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=n, ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
 
@@ -383,7 +386,7 @@ def show(args):
 
 def export(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=n, ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
 
@@ -474,7 +477,7 @@ def export(args):
 
 def import_to_server(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=n, ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
 
