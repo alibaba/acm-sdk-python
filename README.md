@@ -162,7 +162,7 @@ Get all config items of current namespace, with dataId and group information onl
 * `param` *group* Group, use "DEFAULT_GROUP" if no group specified.
 * `param` *content* Config value.
 * `param` *timeout* Timeout for requesting server in seconds.
-* `return`
+* `return` True if success or an exception will be raised.
 
 Publish one data item to ACM.
 * If the data key is not exist, create one first.
@@ -175,7 +175,7 @@ Publish one data item to ACM.
 * `param` *data_id* Data id.
 * `param` *group* Group, use "DEFAULT_GROUP" if no group specified.
 * `param` *timeout* Timeout for requesting server in seconds.
-* `return`
+* `return` True if success or an exception will be raised.
 
 Remove one data item from ACM.
 

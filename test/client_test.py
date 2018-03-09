@@ -7,11 +7,10 @@ from acm import files
 import time
 import shutil
 
-
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "***********"
-AK = "***********"
-SK = "***********"
+NAMESPACE = ""
+AK = ""
+SK = ""
 
 
 class TestClient(unittest.TestCase):
@@ -86,6 +85,7 @@ class TestClient(unittest.TestCase):
         class Share:
             content = None
             count = 0
+
         cache_key = "+".join([data_id, group, ""])
 
         def test_cb(args):
@@ -142,6 +142,7 @@ class TestClient(unittest.TestCase):
         def cb(x):
             Share.content = x["content"]
             print(Share.content)
+
         # test common
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
         group = "group"
@@ -177,14 +178,23 @@ class TestClient(unittest.TestCase):
         files.save_file(acm.DEFAULTS["SNAPSHOT_BASE"], key, a)
         self.assertEqual(a, files.read_file(acm.DEFAULTS["SNAPSHOT_BASE"], key))
 
-    def test_publish(self):
+    def test_publish_remove(self):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
-        group = "group"
-        content = "test"
-        c._publish(data_id,group,content)
+        group = "acm"
+        content = u"test中文"
+        c.remove(data_id, group)
+        time.sleep(0.5)
+        self.assertIsNone(c.get(data_id, group))
+        c.publish(data_id, group, content)
+        time.sleep(0.5)
+        self.assertEqual(c.get(data_id, group), content)
+
+    def test_list_all(self):
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.set_debugging()
+        self.assertGreater(len(c.list_all()), 1)
 
 
 if __name__ == '__main__':
     unittest.main()
-

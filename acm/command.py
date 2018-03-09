@@ -5,6 +5,7 @@ import fcntl
 import shutil
 import gettext
 from datetime import datetime
+import zipfile
 from acm import ACMClient, DEFAULT_GROUP_NAME
 
 
@@ -149,7 +150,7 @@ def add(args):
             "namespaces": {}
         }
         print(
-                "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(tls, "yellow")))
+            "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(tls, "yellow")))
     else:
         if config["endpoints"][e]["tls"] != tls:
             config["endpoints"][e]["tls"] = tls
@@ -169,8 +170,8 @@ def add(args):
         config["endpoints"][e]["namespaces"][ns] = {"ak": ak, "sk": sk, "alias": alias, "is_current": False,
                                                     "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         print(
-                "Add new namespace %s(%s) to %s.\n" %
-                (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
+            "Add new namespace %s(%s) to %s.\n" %
+            (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
 
     write_config(config)
 
@@ -242,7 +243,13 @@ def list_conf(args):
     c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
-    configs = c.list_all(args.group, args.prefix)
+
+    try:
+        configs = c.list_all(args.group, args.prefix)
+    except:
+        print("List failed.")
+        sys.exit(1)
+
     for i in sorted(configs, key=lambda x: x["group"] + x["dataId"]):
         print("%(group)s/%(dataId)s" % i)
 
@@ -274,58 +281,56 @@ def pull(args):
     c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
-    if "/" in args.data_id:
-        g, d = args.data_id.split("/")
-        content = c.get(d, g, no_snapshot=True)
-    else:
-        content = c.get(args.data_id, None, no_snapshot=True)
+    try:
+        if "/" in args.data_id:
+            g, d = args.data_id.split("/")
+            content = c.get(d, g, no_snapshot=True)
+        else:
+            content = c.get(args.data_id, None, no_snapshot=True)
+    except:
+        print("Pull %s failed." % args.data_id)
+        sys.exit(1)
 
     if content is None:
         print("%s does not exist." % _colored(args.data_id, "red"))
         sys.exit(1)
-
-    if args.stdout:
-        print(content)
-        sys.exit(0)
-
-    fn = args.file or args.data_id
-    if "/" in fn:
-        try:
-            os.makedirs(fn[:fn.rindex("/")])
-        except OSError:
-            pass
-    _write_file(fn, content)
-
-    print("[dataId:%s] has been saved to [file:%s].\n" % (_colored(args.data_id, "green"), _colored(fn, "yellow")))
+    os.write(1, content.encode("utf8"))
 
 
 def push(args):
+    if args.file:
+        if not sys.stdin.isatty():
+            print(_colored("Warning: content from stdin will be ignored since file is specified.", "grey"))
+        if not os.path.exists(args.file):
+            print("File %s does not exist." % _colored(args.file, "red"))
+            sys.exit(1)
+        content = _read_file(args.file)
+    elif not sys.stdin.isatty():
+        content = sys.stdin.read()
+    else:
+        print("Use file or stdin as input.")
+        sys.exit(1)
+
     e, ep, n, ns = _process_namespace(args)
     c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
     if ep["tls"]:
         c.set_options(tls_enabled=True)
 
-    if not os.path.exists(args.file):
-        print("File %s does not exist." % _colored(args.file, "red"))
-        sys.exit(1)
-
-    data_id = args.data_id or args.file
-
-    if data_id.count("/") > 1:
+    if args.data_id.count("/") > 1:
         print("Invalid dataId or filename, more than one / is given.")
         sys.exit(1)
 
-    if "/" in data_id:
-        group, data_id = data_id.split("/")
-    else:
-        group = None
+    group, data_id = args.data_id.split("/") if "/" in args.data_id else (None, args.data_id)
 
-    content = _read_file(args.file)
+    try:
+        c.publish(data_id, group, content)
+    except:
+        import traceback
+        traceback.print_exc()
+        print("Push %s failed." % args.data_id)
+        sys.exit(1)
 
-    c.publish(data_id, group, content)
-
-    print("[file:%s] has been pushed to [dataId:%s].\n" % (
-        _colored(args.file, "yellow"), _colored(args.data_id or args.file, "green")))
+    print("content has been pushed to [dataId:%s].\n" % (_colored(args.data_id, "green")))
 
 
 def current(args):
@@ -390,87 +395,105 @@ def export(args):
     if ep["tls"]:
         c.set_options(tls_enabled=True)
 
-    if args.dir:
-        try:
-            os.makedirs(args.dir)
-        except OSError:
-            pass
+    try:
+        configs = c.list_all()
+    except:
+        print("Get config list failed.")
+        sys.exit(1)
 
-    d = args.dir or "."
-
-    configs = c.list_all()
     groups = set()
     elements = set()
     for i in configs:
         groups.add(i["group"])
         elements.add(os.path.join(i["group"], i["dataId"]) if i["group"] != DEFAULT_GROUP_NAME else i["dataId"])
+    dest_file = args.file or "%s-%s.zip" % (e, n)
+    zip_file = None
 
-    # process deleting
-    if args.delete:
-        candidates = list()
-        # get candidates
-        for root, dirs, files in os.walk(d):
-            if not os.path.basename(root).startswith("."):
-                for i in dirs:
-                    if i.startswith("."):
-                        continue
+    if args.dir:
+        try:
+            os.makedirs(args.dir)
+        except OSError:
+            pass
+        # process deleting
+        if args.delete:
+            candidates = list()
+            # get candidates
+            for root, dirs, files in os.walk(args.dir):
+                if not os.path.basename(root).startswith("."):
+                    for i in dirs:
+                        if i.startswith("."):
+                            continue
 
-                    if i not in groups:
+                        if i not in groups:
+                            candidates.append(os.path.join(root, i))
+
+                    for i in files:
+                        if i.startswith("."):
+                            continue
                         candidates.append(os.path.join(root, i))
+            # kick out elements
+            delete_list = list()
+            trunc_len = len(args.dir) + len(os.path.sep)
+            for i in candidates:
+                if i[trunc_len:] not in elements:
+                    delete_list.append(i)
 
-                for i in files:
-                    if i.startswith("."):
-                        continue
-                    candidates.append(os.path.join(root, i))
-        # kick out elements
-        delete_list = list()
-        trunc_len = len(d) + len(os.path.sep)
-        for i in candidates:
-            if i[trunc_len:] not in elements:
-                delete_list.append(i)
-
-        # deleting
-        if delete_list:
-            print("Following files and dirs are not exist in ACM Server:\n")
-            for i in delete_list:
-                print(" - " + i)
-
-            delete = True
-            if not args.force:
-                while True:
-                    if sys.version_info[0] == 3:
-                        choice = input("\nDeleting all files above? (y/n)")
-                    else:
-                        choice = raw_input("\nDeleting all files above? (y/n)")
-                    if choice.lower() in ["y", "n"]:
-                        delete = choice.lower() == "y"
-                        break
-                    print("Invalid choice, please input y or n.")
-            if delete:
+            # deleting
+            if delete_list:
+                print("Following files and dirs are not exist in ACM Server:\n")
                 for i in delete_list:
-                    try:
-                        if os.path.isfile(i):
-                            os.remove(i)
-                        else:
-                            shutil.rmtree(i)
-                    except OSError:
-                        pass
-                print("Delete complete, continue to export...\n")
+                    print(" - " + i)
 
-    print(_colored(len(configs), "green") + " dataIds on ACM server will be exported to %s.\n" % _colored(d, "yellow"))
+                delete = True
+                if not args.force:
+                    while True:
+                        if sys.version_info[0] == 3:
+                            choice = input("\nDeleting all files above? (y/n)")
+                        else:
+                            choice = raw_input("\nDeleting all files above? (y/n)")
+                        if choice.lower() in ["y", "n"]:
+                            delete = choice.lower() == "y"
+                            break
+                        print("Invalid choice, please input y or n.")
+                if delete:
+                    for i in delete_list:
+                        try:
+                            if os.path.isfile(i):
+                                os.remove(i)
+                            else:
+                                shutil.rmtree(i)
+                        except OSError:
+                            pass
+                    print("Delete complete, continue to export...\n")
+    else:
+        zip_file = zipfile.ZipFile(dest_file, 'w', zipfile.ZIP_DEFLATED)
+
+    print(_colored(len(configs), "green") + " dataIds on ACM server will be exported to %s.\n" % _colored(
+        args.dir or dest_file, "yellow"))
 
     i = 0
     for config in configs:
         rel_path = config["group"] if config["group"] != DEFAULT_GROUP_NAME else ""
-        try:
-            os.makedirs(os.path.join(d, rel_path))
-        except OSError:
-            pass
+        if args.dir:
+            try:
+                os.makedirs(os.path.join(args.dir, rel_path))
+            except OSError:
+                pass
         i += 1
         sys.stdout.write("\033[K\rExporting: %s/%s   %s:%s" % (i, len(configs), config["group"], config["dataId"]))
         sys.stdout.flush()
-        _write_file(os.path.join(d, rel_path, config["dataId"]),
-                    c.get(config["dataId"], config["group"], no_snapshot=True))
+        try:
+            content = c.get(config["dataId"], config["group"], no_snapshot=True)
+        except:
+            print("Get content of %s:%s failed." % (config["group"] or DEFAULT_GROUP_NAME, config["dataId"]))
+            sys.exit(1)
+
+        if args.dir:
+            _write_file(os.path.join(args.dir, rel_path, config["dataId"]), content)
+        else:
+            zip_file.writestr(os.path.join(rel_path, config["dataId"]), content.encode("utf8"))
+    if zip_file:
+        zip_file.close()
     print("")
     print("All dataIds exported.\n")
 
@@ -483,19 +506,35 @@ def import_to_server(args):
 
     if args.dir and not os.path.isdir(args.dir):
         print("%s does not exist." % _colored(args.dir, "red"))
+        sys.exit(1)
 
-    d = args.dir or "."
+    src_file = args.file or args.file or "%s-%s.zip" % (e, n)
+    zip_file = None
+    if not args.dir and not os.path.isfile(src_file):
+        print("%s does not exist." % _colored(src_file, "red"))
+        sys.exit(1)
 
     data_to_import = list()
-    for f in os.listdir(d):
-        if f.startswith("."):
-            continue
-        if os.path.isfile(os.path.join(d, f)):
-            data_to_import.append((f, DEFAULT_GROUP_NAME))
-        else:
-            for ff in os.listdir(os.path.join(d, f)):
-                if not ff.startswith(".") and os.path.isfile(os.path.join(d, f, ff)):
-                    data_to_import.append((ff, f))
+    if args.dir:
+        for f in os.listdir(args.dir):
+            if f.startswith("."):
+                continue
+            if os.path.isfile(os.path.join(args.dir, f)):
+                data_to_import.append((f, DEFAULT_GROUP_NAME))
+            else:
+                for ff in os.listdir(os.path.join(args.dir, f)):
+                    if not ff.startswith(".") and os.path.isfile(os.path.join(args.dir, f, ff)):
+                        data_to_import.append((ff, f))
+    else:
+        zip_file = zipfile.ZipFile(src_file, 'r', zipfile.ZIP_DEFLATED)
+        for info in zip_file.infolist():
+            sp = info.filename.split(os.path.sep)
+            if len(sp) == 1:
+                data_to_import.append((sp[0], DEFAULT_GROUP_NAME))
+            elif len(sp) == 2 and sp[1]:
+                data_to_import.append((sp[1], sp[0]))
+            else:
+                print("ignoring invalid path: %s" % info.filename)
 
     # process deleting
     if args.delete:
@@ -508,7 +547,7 @@ def import_to_server(args):
 
         # deleting
         if delete_list:
-            print("Following dataIds are not exist in %s:\n" % _colored(d, "yellow"))
+            print("Following dataIds are not exist in %s:\n" % _colored(args.dir or src_file, "yellow"))
             for i in delete_list:
                 print(" - %s:%s" % (i["group"], i["dataId"]))
 
@@ -535,8 +574,21 @@ def import_to_server(args):
         i += 1
         sys.stdout.write("\033[K\rImporting: %s/%s   %s:%s" % (i, len(data_to_import), data[1], data[0]))
         sys.stdout.flush()
-        f = os.path.join(d, data[1], data[0]) if data[1] != DEFAULT_GROUP_NAME else os.path.join(d, data[0])
-        c.publish(data[0], data[1], _read_file(f))
+        if args.dir:
+            f = os.path.join(args.dir, data[1], data[0]) if data[1] != DEFAULT_GROUP_NAME else os.path.join(args.dir,
+                                                                                                            data[0])
+            content = _read_file(f)
+        else:
+            name = os.path.join(data[1], data[0]) if data[1] != DEFAULT_GROUP_NAME else data[0]
+            content = zip_file.read(name)
+
+        try:
+            c.publish(data[0], data[1], content)
+        except:
+            print("Publish %s/%s failed." % (data[1], data[0]))
+            sys.exit(1)
+    if zip_file:
+        zip_file.close()
     print("")
     print("All files imported.\n")
 
@@ -586,40 +638,44 @@ def arg_parse():
 
     # pull
     parser_pull = subparsers.add_parser("pull", help="get one config content",
-                                        description="Get one config content from ACM server and save to local file.",
-                                        epilog="Example: acm pull group/dataId")
-    parser_pull.add_argument("data_id", help='the dataId to pull, use group"/"dataId to specify group, '
-                                             'if group is specified, file will be store under an subdir of group name.')
-    parser_pull.add_argument("-f", dest="file", default=None, help="file to store the content, create one if absent.")
-    parser_pull.add_argument("-o", action="store_true", dest="stdout", default=False, help="only print on console.")
+                                        description="Get one config content from ACM server.",
+                                        epilog="Example: acm pull group/dataId > dest.txt")
+    parser_pull.add_argument("data_id", help='the dataId to pull from, use group"/"dataId to specify group.')
     parser_pull.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_pull.set_defaults(func=pull)
 
     # push
     parser_push = subparsers.add_parser("push", help="push one config",
-                                        description="Push one config with content of local file to ACM server.",
-                                        epilog="Example: acm push dir/file")
-    parser_push.add_argument("file", help="file to push, filename is use as dataId by default, "
-                                          "if parent dir is attached, it will be use as group.")
-    parser_push.add_argument("-d", dest="data_id", default=None, help='dataId to store the content, '
-                                                                      'use group"/"dataId to specify group.')
+                                        description="Push one config with the content of a local file or stdin.",
+                                        epilog="Example: cat source.txt | acm push group/dataId")
+    parser_push.add_argument("data_id", help='the dataId to store the content, use group"/"dataId to specify group.')
+    parser_push.add_argument("-f", dest="file", default=None, help='the file to push, stdin can not be empty '
+                                                                   'if file is not specified.')
     parser_push.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_push.set_defaults(func=push)
 
     # export
-    parser_export = subparsers.add_parser("export", help="export dataIds to local files",
-                                          description="Export dataIds of specified namespace to local files.")
-    parser_export.add_argument("-d", dest="dir", default=None, help='export destination dir.')
+    parser_export = subparsers.add_parser("export", help="export dataIds to local",
+                                          description="Export dataIds of specified namespace to local dir or zip file.")
+    parser_export.add_argument("-f", dest="file", default=None, help='zip file name, '
+                                                                     'use "endpoint-namepspace_id.zip" as default.')
+    parser_export.add_argument("-d", dest="dir", default=None, help='export destination dir, file is ignored '
+                                                                    'if dir is specified.')
     parser_export.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_export.add_argument("--delete", action="store_true", default=False,
-                               help="delete the file not exist in ACM server (hidden files startswith . are igonred).")
-    parser_export.add_argument("--force", action="store_true", default=False, help="run and delete silently.")
+                               help="[only for dir mode] "
+                                    "delete the file not exist in ACM server (hidden files startswith . are igonred).")
+    parser_export.add_argument("--force", action="store_true", default=False, help="[only for dir mode] "
+                                                                                   "run and delete silently.")
     parser_export.set_defaults(func=export)
 
     # import
-    parser_import = subparsers.add_parser("import", help="import files to ACM server",
-                                          description="Import files to ACM server, using specified namespace.")
-    parser_import.add_argument("-d", dest="dir", default=None, help='import source dir.')
+    parser_import = subparsers.add_parser("import", help="import local dir or zip file to ACM server",
+                                          description="Import local dir or zip file to ACM server.")
+    parser_import.add_argument("-f", dest="file", default=None, help='zip file name, '
+                                                                     'use "endpoint-namepspace_id.zip" as default.')
+    parser_import.add_argument("-d", dest="dir", default=None, help='import source dir, file is ignored '
+                                                                    'if dir is specified.')
     parser_import.add_argument("-n", dest="namespace", default=None, help='"endpoint:namespace_id" or alias.')
     parser_import.add_argument("--delete", action="store_true", default=False,
                                help="delete the dataId not exist locally.")
@@ -649,16 +705,15 @@ def main():
     Namespace Commands(use blank namespace if not specified):
         acm list [-g {group}] [-p {prefix}] # Get all dataIds matching group or prefix.
 
-        acm pull {dataId} [-f {file}] [-o]  # Get a config content, default group is DEFAULT_GROUP.
-            -o: Print content to screen.
+        acm pull {dataId}                   # Get a config content, default group is DEFAULT_GROUP.
 
-        acm push {file} [-d {dataId}]      # Push one file to ACM
+        acm push {dataId} [-f {file}]       # Push one file or content from stdin to ACM
 
-        acm export [-d {dir}] [--delete] [--force]  # Export dataIds as files, with group as parent directory.
+        acm export [-d {dir}] [-f {zip_file}] [--delete] [--force]  # Export dataIds as files.
             --delete:   If local file or directory can not match dataIds ACM, delete it.
             --force:    Overwrite or delete files without asking.
 
-        acm import [-d {dir}] [--delete] [--force]  # Import files to ACM, first level
+        acm import [-d {dir}] [-f {zip_file}] [--delete] [--force]  # Import files to ACM.
             --delete:   If dataId or group can not match local files, delete it.
             --force:    Overwrite or delete dataIds without asking.
 
@@ -690,10 +745,10 @@ def main():
             acm list -g ACM
 
         Get from ACM:
-            acm pull jdbc.properties -g ACM
+            acm pull ACM/jdbc.properties >> ACM/jdbc.properties
 
         Modify it, then publish to ACM:
-            acm push jdbc.properties -g ACM
+            cat ACM/jdbc.properties | acm push ACM/jdbc.properties
 
         Clone all configs from ACM:
             acm export -d dev_configs

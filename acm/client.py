@@ -34,7 +34,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -58,6 +58,10 @@ OPTIONS = set(
 
 
 class ACMException(Exception):
+    pass
+
+
+class ACMRequestException(ACMException):
     pass
 
 
@@ -227,7 +231,7 @@ class ACMClient:
         :param data_id: dataId.
         :param group: group, use "DEFAULT_GROUP" if no group specified.
         :param timeout: timeout for requesting server in seconds.
-        :return:
+        :return: True if success or an exception will be raised.
         """
         data_id, group = process_common_params(data_id, group)
         logger.info(
@@ -245,6 +249,7 @@ class ACMClient:
                                      timeout or self.default_timeout)
             logger.info("[remove] success to remove group:%s, data_id:%s, server response:%s" % (
                 group, data_id, resp.read()))
+            return True
         except HTTPError as e:
             if e.code == HTTPStatus.FORBIDDEN:
                 logger.error(
@@ -253,10 +258,10 @@ class ACMClient:
             else:
                 logger.error("[remove] error code [:%s] for namespace:%s, group:%s, data_id:%s" % (
                     e.code, self.namespace, group, data_id))
-        except ACMException as e:
-            logger.error("[remove] acm exception: %s" % str(e))
+                raise ACMException("Request Error, code is %s" % e.code)
         except Exception as e:
             logger.exception("[remove] exception %s occur" % str(e))
+            raise
 
     def publish(self, data_id, group, content, timeout=None):
         """ Publish one data item to ACM.
@@ -269,16 +274,16 @@ class ACMClient:
         :param group: group, use "DEFAULT_GROUP" if no group specified.
         :param content: content of the data item.
         :param timeout: timeout for requesting server in seconds.
-        :return:
+        :return: True if success or an exception will be raised.
         """
         if content is None:
             raise ACMException("Can not publish none content, use remove instead.")
 
         data_id, group = process_common_params(data_id, group)
-        logger.info("[publish] data_id:%s, group:%s, namespace:%s, content:%s, timeout:%s" % (
-            data_id, group, self.namespace, truncate(content), timeout))
         if type(content) == bytes:
             content = content.decode("utf-8")
+        logger.info("[publish] data_id:%s, group:%s, namespace:%s, content:%s, timeout:%s" % (
+                data_id, group, self.namespace, truncate(content), timeout))
         params = {
             "dataId": data_id,
             "group": group,
@@ -292,6 +297,7 @@ class ACMClient:
                                      timeout or self.default_timeout)
             logger.info("[publish] success to publish content, group:%s, data_id:%s, server response:%s" % (
                 group, data_id, resp.read()))
+            return True
         except HTTPError as e:
             if e.code == HTTPStatus.FORBIDDEN:
                 logger.error(
@@ -300,10 +306,10 @@ class ACMClient:
             else:
                 logger.error("[publish] error code [:%s] for namespace:%s, group:%s, data_id:%s" % (
                     e.code, self.namespace, group, data_id))
-        except ACMException as e:
-            logger.error("[publish] acm exception: %s" % str(e))
+                raise ACMException("Request Error, code is %s" % e.code)
         except Exception as e:
             logger.exception("[publish] exception %s occur" % str(e))
+            raise
 
     def get(self, data_id, group, timeout=None, no_snapshot=False):
         """Get value of one config item.
@@ -366,10 +372,12 @@ class ACMClient:
             else:
                 logger.error("[get-config] error code [:%s] for data_id:%s, group:%s, namespace:%s" % (
                     e.code, data_id, group, self.namespace))
-        except ACMException as e:
-            logger.error("[get-config] acm exception: %s" % str(e))
+                if no_snapshot:
+                    raise
         except Exception as e:
             logger.exception("[get-config] exception %s occur" % str(e))
+            if no_snapshot:
+                raise
 
         if no_snapshot:
             return content
@@ -424,12 +432,10 @@ class ACMClient:
                 raise ACMException("Insufficient privilege.")
             else:
                 logger.error("[list] error code [:%s] for namespace:%s" % (e.code, self.namespace))
-        except ACMException as e:
-            logger.error("[list] acm exception: %s" % str(e))
+                raise ACMException("Request Error, code is %s" % e.code)
         except Exception as e:
             logger.exception("[list] exception %s occur" % str(e))
-
-        return None
+            raise
 
     def list_all(self, group=None, prefix=None):
         """ Get all config items of current namespace, with content included.
@@ -571,7 +577,7 @@ class ACMClient:
                 server_info = self.get_server()
                 if not server_info:
                     logger.error("[do-sync-req] can not get one server.")
-                    raise ACMException("Server is not available.")
+                    raise ACMRequestException("Server is not available.")
                 address, port, is_ip_address = server_info
                 server = ":".join([address, str(port)])
                 # if tls is enabled and server address is in ip, turn off verification
@@ -606,7 +612,7 @@ class ACMClient:
             tries += 1
             if tries >= len(self.server_list):
                 logger.error("[do-sync-req] %s maybe down, no server is currently available" % server)
-                raise ACMException("All server are not available")
+                raise ACMRequestException("All server are not available")
             self.change_server()
             logger.warning("[do-sync-req] %s maybe down, skip to next" % server)
 
