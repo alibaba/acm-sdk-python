@@ -34,7 +34,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.8"
+VERSION = "0.3.9"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -795,7 +795,7 @@ class ACMClient:
     def encrypt(self, plain_txt):
         if not self._prepare_kms():
             return plain_txt
-
+        ssl._create_default_https_context = ssl._create_unverified_context
         req = EncryptRequest()
         req.set_KeyId(self.key_id)
         req.set_Plaintext(plain_txt if type(plain_txt) == bytes else plain_txt.encode("utf8"))
@@ -805,7 +805,7 @@ class ACMClient:
     def decrypt(self, cipher_blob):
         if not self._prepare_kms():
             return cipher_blob
-
+        ssl._create_default_https_context = ssl._create_unverified_context
         req = DecryptRequest()
         req.set_CiphertextBlob(cipher_blob)
         resp = json.loads(self.kms_client.do_action_with_exception(req))
