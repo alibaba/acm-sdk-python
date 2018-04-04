@@ -8,9 +8,13 @@ import time
 import shutil
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = ""
-AK = ""
-SK = ""
+NAMESPACE = "6018********0d38"
+AK = "654b********ce9750"
+SK = "GLf********xcao="
+KMS_AK = "L********GgyI"
+KMS_SECRET = "xzhB9********TYgb01"
+KEY_ID = "ed0********467be"
+REGION_ID = "cn-shanghai"
 
 
 class TestClient(unittest.TestCase):
@@ -194,6 +198,27 @@ class TestClient(unittest.TestCase):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         c.set_debugging()
         self.assertGreater(len(c.list_all()), 1)
+
+    def test_kms_encrypt(self):
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.set_options(kms_enabled=True, kms_ak=KMS_AK, kms_secret=KMS_SECRET,
+                      region_id=REGION_ID, key_id=KEY_ID)
+        self.assertNotEqual(c.encrypt("中文"), "中文")
+
+    def test_kms_decrypt(self):
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.set_options(kms_enabled=True, kms_ak=KMS_AK, kms_secret=KMS_SECRET,
+                      region_id=REGION_ID, key_id=KEY_ID)
+        a = c.encrypt("test")
+        self.assertEqual(c.decrypt(a), "test")
+
+    def test_key_encrypt(self):
+        c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.set_options(kms_enabled=True, kms_ak=KMS_AK, kms_secret=KMS_SECRET,
+                      region_id=REGION_ID, key_id=KEY_ID)
+        value = "test"
+        self.assertTrue(c.publish("test_python-cipher", None, value))
+        self.assertEqual(c.get("test_python-cipher", None), value)
 
 
 if __name__ == '__main__':

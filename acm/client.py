@@ -34,13 +34,26 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.4"
+VERSION = "0.3.8"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
 
 WORD_SEPARATOR = u'\x02'
 LINE_SEPARATOR = u'\x01'
+
+kms_available = False
+
+try:
+    from aliyunsdkcore.client import AcsClient
+    from aliyunsdkkms.request.v20160120.DecryptRequest import DecryptRequest
+    from aliyunsdkkms.request.v20160120.EncryptRequest import EncryptRequest
+
+    kms_available = True
+except ImportError:
+    logger.info("Aliyun KMS SDK is not installed")
+
+ENCRYPTED_DATA_ID_PREFIX = "cipher-"
 
 DEFAULTS = {
     "APP_NAME": "ACM-SDK-Python",
@@ -49,12 +62,16 @@ DEFAULTS = {
     "PULLING_CONFIG_SIZE": 3000,
     "CALLBACK_THREAD_NUM": 10,
     "FAILOVER_BASE": "acm-data/data",
-    "SNAPSHOT_BASE": "acm-data/snapshot"
+    "SNAPSHOT_BASE": "acm-data/snapshot",
+    "KMS_ENABLED": False,
+    "REGION_ID": "",
+    "KEY_ID": "",
 }
 
 OPTIONS = set(
     ["default_timeout", "tls_enabled", "auth_enabled", "cai_enabled", "pulling_timeout", "pulling_config_size",
-     "callback_thread_num", "failover_base", "snapshot_base", "app_name"])
+     "callback_thread_num", "failover_base", "snapshot_base", "app_name", "kms_enabled", "region_id",
+     "kms_ak", "kms_secret", "key_id"])
 
 
 class ACMException(Exception):
@@ -91,6 +108,10 @@ def parse_pulling_result(result):
             sp.append("")
         ret.append(sp)
     return ret
+
+
+def is_encrypted(data_id):
+    return data_id.startswith(ENCRYPTED_DATA_ID_PREFIX)
 
 
 class WatcherWrap:
@@ -162,6 +183,12 @@ class ACMClient:
         self.failover_base = DEFAULTS["FAILOVER_BASE"]
         self.snapshot_base = DEFAULTS["SNAPSHOT_BASE"]
         self.app_name = DEFAULTS["APP_NAME"]
+        self.kms_enabled = DEFAULTS["KMS_ENABLED"]
+        self.region_id = DEFAULTS["REGION_ID"]
+        self.key_id = DEFAULTS["KEY_ID"]
+        self.kms_ak = self.ak
+        self.kms_secret = self.sk
+        self.kms_client = None
 
         logger.info("[client-init] endpoint:%s, tenant:%s" % (endpoint, namespace))
 
@@ -169,6 +196,10 @@ class ACMClient:
         for k, v in kwargs.items():
             if k not in OPTIONS:
                 logger.warning("[set_options] unknown option:%s, ignored" % k)
+                continue
+
+            if k == "kms_enabled" and v and not kms_available:
+                logger.warning("[set_options] kms can not be turned on with no KMS SDK installed")
                 continue
 
             logger.debug("[set_options] key:%s, value:%s" % (k, v))
@@ -281,9 +312,13 @@ class ACMClient:
 
         data_id, group = process_common_params(data_id, group)
         if type(content) == bytes:
-            content = content.decode("utf-8")
+            content = content.decode("utf8")
+
+        if is_encrypted(data_id) and self.kms_enabled:
+            content = self.encrypt(content)
+
         logger.info("[publish] data_id:%s, group:%s, namespace:%s, content:%s, timeout:%s" % (
-                data_id, group, self.namespace, truncate(content), timeout))
+            data_id, group, self.namespace, truncate(content), timeout))
         params = {
             "dataId": data_id,
             "group": group,
@@ -312,6 +347,12 @@ class ACMClient:
             raise
 
     def get(self, data_id, group, timeout=None, no_snapshot=False):
+        content = self.get_raw(data_id, group, timeout, no_snapshot)
+        if is_encrypted(data_id) and self.kms_enabled:
+            return self.decrypt(content)
+        return content
+
+    def get_raw(self, data_id, group, timeout=None, no_snapshot=False):
         """Get value of one config item.
 
         Query priority:
@@ -416,7 +457,7 @@ class ACMClient:
         params = {
             "pageNo": page,
             "pageSize": size,
-            "method": "getAllConfigInfoByTenant",
+            "method": "getAllConfigByTenant",
         }
 
         if self.namespace:
@@ -431,7 +472,7 @@ class ACMClient:
                 logger.error("[list] no right for namespace:%s" % self.namespace)
                 raise ACMException("Insufficient privilege.")
             else:
-                logger.error("[list] error code [:%s] for namespace:%s" % (e.code, self.namespace))
+                logger.error("[list] error code [%s] for namespace:%s" % (e.code, self.namespace))
                 raise ACMException("Request Error, code is %s" % e.code)
         except Exception as e:
             logger.exception("[list] exception %s occur" % str(e))
@@ -743,6 +784,32 @@ class ACMClient:
                 headers["Spas-Signature"] = base64.encodebytes(
                     hmac.new(self.sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip()
         return headers
+
+    def _prepare_kms(self):
+        if not (self.region_id and self.kms_ak and self.kms_secret and self.key_id):
+            return False
+        if not self.kms_client:
+            self.kms_client = AcsClient(ak=self.kms_ak, secret=self.kms_secret, region_id=self.region_id)
+        return True
+
+    def encrypt(self, plain_txt):
+        if not self._prepare_kms():
+            return plain_txt
+
+        req = EncryptRequest()
+        req.set_KeyId(self.key_id)
+        req.set_Plaintext(plain_txt if type(plain_txt) == bytes else plain_txt.encode("utf8"))
+        resp = json.loads(self.kms_client.do_action_with_exception(req))
+        return resp["CiphertextBlob"]
+
+    def decrypt(self, cipher_blob):
+        if not self._prepare_kms():
+            return cipher_blob
+
+        req = DecryptRequest()
+        req.set_CiphertextBlob(cipher_blob)
+        resp = json.loads(self.kms_client.do_action_with_exception(req))
+        return resp["Plaintext"]
 
 
 if DEBUG:

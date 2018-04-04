@@ -208,6 +208,28 @@ You can use `acm {subcommand}` directly after installation, sub commands availab
 
 Use `acm -h` to see the detailed manual.
 
+## Data Security Options
+
+ACM allows you to encrypt data along with [Key Management Service](https://www.aliyun.com/product/kms), service provided by Alibaba Cloud (also known as **KMS**).
+
+To use this feature, you can follow these steps:
+1. Install KMS SDK by `pip install aliyun-python-sdk-kms`.
+2. Name your data_id with a `cipher-` prefix.
+3. Get and filling all the needed configuration to `ACMClient`, info needed are: `region_id`, `kms_ak`, `kms_secret`, `key_id`.
+4. Just make API calls and SDK will process data encrypt & decrypt automatically.
+
+Example:
+```
+c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+c.set_options(kms_enabled=True, kms_ak=KMS_AK, kms_secret=KMS_SECRET, region_id=REGION_ID, key_id=KEY_ID)
+
+# publish an encrypted config item.
+c.publish("cipher-dataId", None, "plainText")
+
+# get the content of an encrypted config item.
+c.get("cipher-dataId", None)
+```
+
 ## Other Resources
 
 * Alibaba Cloud ACM homepage: https://www.aliyun.com/product/acm

@@ -30,12 +30,17 @@ INIT_CONF = {
         DEFAULT_ENDPOINT: {
             "tls": False,
             "is_current": True,
+            "region_id": None,
+            "kms_enabled": False,
             "namespaces": {
                 "[default]": {
                     "is_current": True,
                     "ak": None,
                     "sk": None,
                     "alias": "[default]",
+                    "kms_ak": None,
+                    "kms_secret": None,
+                    "key_id": None,
                     "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
             }
@@ -123,10 +128,7 @@ def add(args):
     else:
         e = DEFAULT_ENDPOINT
         ns = args.namespace
-    tls = args.tls
     config = read_config()
-    ak = args.ak
-    sk = args.sk
     alias = args.alias or ns
 
     if args.alias is not None and ":" in args.alias:
@@ -144,34 +146,90 @@ def add(args):
 
     # new endpoint
     if e not in config["endpoints"]:
+        if args.kms:
+            if not args.region_id:
+                print(_colored("Region ID", "red") + " must be specified to use KMS.")
+                sys.exit(1)
         config["endpoints"][e] = {
-            "tls": tls,
+            "tls": args.tls,
             "is_current": False,
+            "region_id": args.region_id,
+            "kms_enabled": args.kms,
             "namespaces": {}
         }
         print(
-            "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(tls, "yellow")))
+                "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(args.tls, "yellow")))
     else:
-        if config["endpoints"][e]["tls"] != tls:
-            config["endpoints"][e]["tls"] = tls
-            print("TLS attr of %s has changed to %s.\n" % (_colored(e, "yellow"), _colored(tls, "yellow")))
+        endpoint = config["endpoints"][e]
+        if args.kms and not args.region_id and not endpoint.get("region_id"):
+            print(_colored("Region ID", "red") + " must be specified to use KMS.")
+            sys.exit(1)
+        if endpoint.get("tls") != args.tls:
+            endpoint["tls"] = args.tls
+            print("TLS attr of %s has changed to %s.\n" % (_colored(e, "yellow"), _colored(args.tls, "yellow")))
+        if endpoint.get("kms_enabled") != args.kms:
+            endpoint["kms_enabled"] = args.kms
+            print("KMS enabled of %s has turned to %s.\n" % (_colored(e, "yellow"), _colored(args.kms, "yellow")))
+        if args.region_id is not None:
+            if endpoint.get("region_id") != args.region_id:
+                endpoint["region_id"] = args.region_id
+                print("Region ID of %s has changed to %s.\n" % (
+                _colored(e, "yellow"), _colored(args.region_id, "yellow")))
 
     if ns in config["endpoints"][e]["namespaces"]:
-        if ak is not None:
-            config["endpoints"][e]["namespaces"][ns]["ak"] = ak
-        if sk is not None:
-            config["endpoints"][e]["namespaces"][ns]["sk"] = sk
+        namespace = config["endpoints"][e]["namespaces"][ns]
+        if args.ak is not None:
+            namespace["ak"] = args.ak
+        if args.sk is not None:
+            namespace["sk"] = args.sk
         if args.alias is not None:
-            config["endpoints"][e]["namespaces"][ns]["alias"] = alias
-        config["endpoints"][e]["namespaces"][ns]["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            namespace["alias"] = alias
+        if args.kms_ak is not None:
+            namespace["kms_ak"] = args.kms_ak
+        if args.kms_secret is not None:
+            namespace["kms_secret"] = args.kms_secret
+        if args.key_id is not None:
+            namespace["key_id"] = args.key_id
+        if args.kms:
+            if not namespace.get("kms_ak"):
+                if not namespace.get("ak"):
+                    print(_colored("AccessKey", "red") + ' must be specified to use KMS.')
+                    sys.exit(1)
+                namespace["kms_ak"] = namespace.get("ak")
+            if not namespace.get("kms_secret"):
+                if not namespace.get("sk"):
+                    print(_colored("SecretKey", "red") + ' must be specified to use KMS.')
+                    sys.exit(1)
+                namespace["kms_secret"] = namespace.get("sk")
+            if not namespace.get("key_id"):
+                print(_colored("Key ID", "red") + ' must be specified to use KMS.')
+                sys.exit(1)
+        namespace["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print("Namespace %s is already exist in %s, updating configs.\n" % (
             _colored(ns, "green"), _colored(e, "yellow")))
     else:
-        config["endpoints"][e]["namespaces"][ns] = {"ak": ak, "sk": sk, "alias": alias, "is_current": False,
-                                                    "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        namespace = {"ak": args.ak, "sk": args.sk, "alias": alias, "is_current": False,
+                     "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     "kms_ak": None, "kms_secret": None, "key_id": None}
+        if args.kms:
+            if not args.key_id:
+                print(_colored("Key ID", "red") + ' must be specified to use KMS.')
+                sys.exit(1)
+            kms_ak = args.kms_ak or args.ak
+            if not kms_ak:
+                print(_colored("AccessKey", "red") + ' must be specified to use KMS.')
+                sys.exit(1)
+            kms_secret = args.kms_secret or args.sk
+            if not kms_secret:
+                print(_colored("SecretKey", "red") + ' must be specified to use KMS.')
+                sys.exit(1)
+            namespace["kms_ak"] = kms_ak
+            namespace["kms_secret"] = kms_secret
+            namespace["key_id"] = args.key_id
+        config["endpoints"][e]["namespaces"][ns] = namespace
         print(
-            "Add new namespace %s(%s) to %s.\n" %
-            (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
+                "Add new namespace %s(%s) to %s.\n" %
+                (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
 
     write_config(config)
 
@@ -278,9 +336,7 @@ def _read_file(file):
 
 def pull(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
-    if ep["tls"]:
-        c.set_options(tls_enabled=True)
+    c = _get_client(e, ep, n, ns)
     try:
         if "/" in args.data_id:
             g, d = args.data_id.split("/")
@@ -312,9 +368,7 @@ def push(args):
         sys.exit(1)
 
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
-    if ep["tls"]:
-        c.set_options(tls_enabled=True)
+    c = _get_client(e, ep, n, ns)
 
     if args.data_id.count("/") > 1:
         print("Invalid dataId or filename, more than one / is given.")
@@ -336,14 +390,20 @@ def push(args):
 def current(args):
     config = read_config()
     e, n = _get_current(config)
-    print("Current Endpoint:\t%s, using TLS is %s." % (
-        _colored(e, "yellow"), _colored(config["endpoints"][e]["tls"], "yellow")))
+    print("Current Endpoint:\t%s, using TLS is %s, using KMS is %s, Region ID is %s." % (
+        _colored(e, "yellow"), _colored(config["endpoints"][e].get("tls"), "yellow"),
+        _colored(config["endpoints"][e].get("kms_enabled"), "yellow"),
+        _colored(config["endpoints"][e].get("region_id"), "yellow")))
     print("\nCurrent Namespace:\t%s" % (_colored(n)))
     ns = config["endpoints"][e]["namespaces"][n]
 
     print("\tAlias:\t\t%s" % _colored(ns["alias"], "green"))
     print("\tAccessKey:\t%s" % ns["ak"])
     print("\tSecretKey:\t%s" % ns["sk"])
+    if config["endpoints"][e].get("kms_enabled"):
+        print("\tAccessKey for KMS:\t%s" % ns.get("kms_ak"))
+        print("\tSecretKey for KMS:\t%s" % ns.get("kms_secret"))
+        print("\tKey ID:\t%s" % ns.get("key_id"))
     print("")
 
 
@@ -391,10 +451,7 @@ def show(args):
 
 def export(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
-    if ep["tls"]:
-        c.set_options(tls_enabled=True)
-
+    c = _get_client(e, ep, n, ns)
     try:
         configs = c.list_all()
     except:
@@ -500,9 +557,7 @@ def export(args):
 
 def import_to_server(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
-    if ep["tls"]:
-        c.set_options(tls_enabled=True)
+    c = _get_client(e, ep, n, ns)
 
     if args.dir and not os.path.isdir(args.dir):
         print("%s does not exist." % _colored(args.dir, "red"))
@@ -593,6 +648,16 @@ def import_to_server(args):
     print("All files imported.\n")
 
 
+def _get_client(e, ep, n, ns):
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
+    if ep.get("kms_enabled"):
+        c.set_options(kms_enabled=True, kms_ak=ns.get("kms_ak"), kms_secret=ns.get("kms_secret"),
+                      region_id=ep.get("region_id"), key_id=ns.get("key_id"))
+    if ep["tls"]:
+        c.set_options(tls_enabled=True)
+    return c
+
+
 def arg_parse():
     parser = argparse.ArgumentParser(prog="acm",
                                      description="ACM command line tools for querying and exporting data.", )
@@ -609,7 +674,15 @@ def arg_parse():
     parser_add.add_argument("-a", dest="ak", default=None, help='AccessKey of this namespace.')
     parser_add.add_argument("-s", dest="sk", help='SecretKey of this namespace.')
     parser_add.add_argument("-n", dest="alias", help='alias of the namespace, ":" is not allowed in alias.')
-    parser_add.add_argument("--tls", action="store_true", default=False, help="to use tls connection.")
+    parser_add.add_argument("--tls", action="store_true", default=False, help="to use TLS connection.")
+    parser_add.add_argument("--kms", action="store_true", default=False, help="to use Key Management Service (KMS).")
+    parser_add.add_argument("-ka", dest="kms_ak", default=None,
+                            help='AccessKey for KMS, use AccessKey by default, required if KMS is enabled.')
+    parser_add.add_argument("-ks", dest="kms_secret", default=None,
+                            help='SecretKey for KMS, use SecretKey by default, required if KMS is enabled.')
+    parser_add.add_argument("-k", dest="key_id", default=None, help='Key ID of KMS, required if KMS is enabled.')
+    parser_add.add_argument("-r", dest="region_id", default=None,
+                            help='Region ID of Alibaba Cloud, required if KMS is enabled.')
     parser_add.set_defaults(func=add)
 
     # use
