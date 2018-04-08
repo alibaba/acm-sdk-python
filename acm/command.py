@@ -201,9 +201,6 @@ def add(args):
                     print(_colored("SecretKey", "red") + ' must be specified to use KMS.')
                     sys.exit(1)
                 namespace["kms_secret"] = namespace.get("sk")
-            if not namespace.get("key_id"):
-                print(_colored("Key ID", "red") + ' must be specified to use KMS.')
-                sys.exit(1)
         namespace["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print("Namespace %s is already exist in %s, updating configs.\n" % (
             _colored(ns, "green"), _colored(e, "yellow")))
@@ -212,9 +209,6 @@ def add(args):
                      "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                      "kms_ak": None, "kms_secret": None, "key_id": None}
         if args.kms:
-            if not args.key_id:
-                print(_colored("Key ID", "red") + ' must be specified to use KMS.')
-                sys.exit(1)
             kms_ak = args.kms_ak or args.ak
             if not kms_ak:
                 print(_colored("AccessKey", "red") + ' must be specified to use KMS.')

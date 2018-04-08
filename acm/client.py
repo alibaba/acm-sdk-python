@@ -34,7 +34,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.9"
+VERSION = "0.3.10"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -348,7 +348,7 @@ class ACMClient:
 
     def get(self, data_id, group, timeout=None, no_snapshot=False):
         content = self.get_raw(data_id, group, timeout, no_snapshot)
-        if is_encrypted(data_id) and self.kms_enabled:
+        if content and is_encrypted(data_id) and self.kms_enabled:
             return self.decrypt(content)
         return content
 
@@ -786,7 +786,7 @@ class ACMClient:
         return headers
 
     def _prepare_kms(self):
-        if not (self.region_id and self.kms_ak and self.kms_secret and self.key_id):
+        if not (self.region_id and self.kms_ak and self.kms_secret):
             return False
         if not self.kms_client:
             self.kms_client = AcsClient(ak=self.kms_ak, secret=self.kms_secret, region_id=self.region_id)
