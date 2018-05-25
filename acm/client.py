@@ -34,7 +34,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.10"
+VERSION = "0.3.12"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -71,7 +71,7 @@ DEFAULTS = {
 OPTIONS = set(
     ["default_timeout", "tls_enabled", "auth_enabled", "cai_enabled", "pulling_timeout", "pulling_config_size",
      "callback_thread_num", "failover_base", "snapshot_base", "app_name", "kms_enabled", "region_id",
-     "kms_ak", "kms_secret", "key_id"])
+     "kms_ak", "kms_secret", "key_id", "no_snapshot"])
 
 
 class ACMException(Exception):
@@ -189,6 +189,7 @@ class ACMClient:
         self.kms_ak = self.ak
         self.kms_secret = self.sk
         self.kms_client = None
+        self.no_snapshot = False
 
         logger.info("[client-init] endpoint:%s, tenant:%s" % (endpoint, namespace))
 
@@ -346,13 +347,13 @@ class ACMClient:
             logger.exception("[publish] exception %s occur" % str(e))
             raise
 
-    def get(self, data_id, group, timeout=None, no_snapshot=False):
+    def get(self, data_id, group, timeout=None, no_snapshot=None):
         content = self.get_raw(data_id, group, timeout, no_snapshot)
         if content and is_encrypted(data_id) and self.kms_enabled:
             return self.decrypt(content)
         return content
 
-    def get_raw(self, data_id, group, timeout=None, no_snapshot=False):
+    def get_raw(self, data_id, group, timeout=None, no_snapshot=None):
         """Get value of one config item.
 
         Query priority:
@@ -371,6 +372,7 @@ class ACMClient:
         :param no_snapshot: do not save snapshot.
         :return: value.
         """
+        no_snapshot = self.no_snapshot if no_snapshot is None else no_snapshot
         data_id, group = process_common_params(data_id, group)
         logger.info("[get-config] data_id:%s, group:%s, namespace:%s, timeout:%s" % (
             data_id, group, self.namespace, timeout))

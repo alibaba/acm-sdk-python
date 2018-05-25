@@ -8,12 +8,12 @@ import time
 import shutil
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "81597****2b55bac3"
-AK = "4c796a4****ba83a296b489"
-SK = "UjLe****faOk1E="
-KMS_AK = "LT****yI"
-KMS_SECRET = "xzhB****gb01"
-KEY_ID = "ed0****67be"
+NAMESPACE = "81597*******2b55bac3"
+AK = "4c79*****6b489"
+SK = "UjLe******k1E="
+KMS_AK = "LTA*******gyI"
+KMS_SECRET = "xzhB******gb01"
+KEY_ID = "ed******7be"
 REGION_ID = "cn-shanghai"
 
 
@@ -40,8 +40,9 @@ class TestClient(unittest.TestCase):
 
     def test_get_key(self):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        c.set_options(no_snapshot=True)
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
-        group = "group"
+        group = "DEFAULT_GROUP"
         print(c.get(data_id, group))
         self.assertNotEqual(c.get(data_id, group), None)
 
@@ -149,7 +150,7 @@ class TestClient(unittest.TestCase):
 
         # test common
         data_id = "com.alibaba.cloud.acm:sample-app.properties"
-        group = "group"
+        group = "DEFAULT_GROUP"
         c.add_watcher(data_id, group, cb)
         time.sleep(10)
         self.assertNotEqual(Share.content, None)

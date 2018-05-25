@@ -2,7 +2,8 @@ from setuptools import setup, find_packages
 import acm
 
 
-long_description = open('README.md').read()
+with open("README.md", "r") as fh:
+    long_description = fh.read()
 
 setup(
     name="acm-sdk-python",

@@ -98,17 +98,19 @@ Configurable options are:
 * *failover_base* - Dir to store failover config files.
 * *snapshot_base* - Dir to store snapshot config files.
 * *app_name* - Client app identifier.
+* *no_snapshot* - To disable default snapshot behavior, this can be overridden by param *no_snapshot* in *get* method.
 
 ## API Reference
  
 ### Get Config
->`ACMClient.get(data_id, group, timeout)`
+>`ACMClient.get(data_id, group, timeout, no_snapshot)`
 
 * `param` *data_id* Data id.
 * `param` *group* Group, use `DEFAULT_GROUP` if no group specified.
 * `param` *timeout* Timeout for requesting server in seconds.
+* `param` *no_snapshot* Whether to use local snapshot while server is unavailable.
 * `return` 
-
+W
 Get value of one config item following priority:
 
 * Step 1 - Get from local failover dir(default: `${cwd}/acm/data`).
