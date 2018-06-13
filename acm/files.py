@@ -13,7 +13,7 @@ def read_file(base, key):
 
     try:
         if sys.version_info[0] == 3:
-            with open(file_path, "r+", newline="") as f:
+            with open(file_path, "r+", encoding="utf8", newline="") as f:
                 fcntl.flock(f, fcntl.LOCK_EX)
                 return f.read()
         else:

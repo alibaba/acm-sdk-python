@@ -8,13 +8,13 @@ import time
 import shutil
 
 ENDPOINT = "acm.aliyun.com:8080"
-NAMESPACE = "81597*******2b55bac3"
-AK = "4c79*****6b489"
-SK = "UjLe******k1E="
-KMS_AK = "LTA*******gyI"
-KMS_SECRET = "xzhB******gb01"
-KEY_ID = "ed******7be"
-REGION_ID = "cn-shanghai"
+NAMESPACE = "815********bac3"
+AK = "4c79*********96b489"
+SK = "Uj**********Ok1E="
+KMS_AK = "LT********gyI"
+KMS_SECRET = "xz*******b01"
+KEY_ID = "ed********67be"
+REGION_ID = "c****ai"
 
 
 class TestClient(unittest.TestCase):
@@ -55,33 +55,39 @@ class TestClient(unittest.TestCase):
     def test_tls(self):
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
         c.set_options(tls_enabled=True)
-        data_id = "com.alibaba.cloud.acm:sample-app.properties"
+        data_id = "com.alibaba.cloud.acm:sample-app.properties-tlstest"
         group = "group"
+        c.publish(data_id, group, "test")
         self.assertNotEqual(c.get(data_id, group), None)
+        c.remove(data_id, group)
 
     def test_server_failover(self):
         acm.ACMClient.set_debugging()
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        data_id = "com.alibaba.cloud.acm:sample-app.properties-fo"
+        group = "group"
+        c.publish(data_id, group, "test")
         c.server_list = [("1.100.84.215", 8080, True), ("139.196.135.144", 8080, True)]
         c.current_server = ("1.100.84.215", 8080, True)
-        data_id = "com.alibaba.cloud.acm:sample-app.properties"
-        group = "group"
         self.assertNotEqual(c.get(data_id, group), None)
+        c.remove(data_id, group)
 
     def test_server_failover_comp(self):
         acm.ACMClient.set_debugging()
         c = acm.ACMClient(ENDPOINT, NAMESPACE, AK, SK)
+        data_id = "com.alibaba.cloud.acm:sample-app.properties-foc"
+        group = "group"
         c.get_server()
+        c.publish(data_id, group, "test")
         c.server_list = [("1.100.84.215", 8080, True), ("100.196.135.144", 8080, True)]
         c.current_server = ("1.100.84.215", 8080, True)
-        data_id = "com.alibaba.cloud.acm:sample-app.properties"
-        group = "group"
         shutil.rmtree(c.snapshot_base, True)
         self.assertEqual(c.get(data_id, group), None)
 
         time.sleep(31)
         shutil.rmtree(c.snapshot_base, True)
         self.assertNotEqual(c.get(data_id, group), None)
+        c.remove(data_id, group)
 
     def test_fake_watcher(self):
         data_id = "com.alibaba"

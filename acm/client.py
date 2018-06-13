@@ -34,7 +34,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.12"
+VERSION = "0.3.13"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -468,6 +468,8 @@ class ACMClient:
         try:
             resp = self._do_sync_req("/diamond-server/basestone.do", None, params, None, self.default_timeout)
             d = resp.read()
+            if isinstance(d, bytes):
+                d = d.decode("utf8")
             return json.loads(d)
         except HTTPError as e:
             if e.code == HTTPStatus.FORBIDDEN:
@@ -801,7 +803,7 @@ class ACMClient:
         req = EncryptRequest()
         req.set_KeyId(self.key_id)
         req.set_Plaintext(plain_txt if type(plain_txt) == bytes else plain_txt.encode("utf8"))
-        resp = json.loads(self.kms_client.do_action_with_exception(req))
+        resp = json.loads(self.kms_client.do_action_with_exception(req).decode("utf8"))
         return resp["CiphertextBlob"]
 
     def decrypt(self, cipher_blob):
@@ -810,7 +812,7 @@ class ACMClient:
         ssl._create_default_https_context = ssl._create_unverified_context
         req = DecryptRequest()
         req.set_CiphertextBlob(cipher_blob)
-        resp = json.loads(self.kms_client.do_action_with_exception(req))
+        resp = json.loads(self.kms_client.do_action_with_exception(req).decode("utf8"))
         return resp["Plaintext"]
 
 
