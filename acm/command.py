@@ -22,7 +22,6 @@ import argparse
 
 DEFAULT_ENDPOINT = "acm.aliyun.com"
 DEFAULT_PORT = 8080
-CMD = set(["bind", "set", "use"])
 CONF = os.path.join(os.getenv("HOME"), ".acm.json")
 
 INIT_CONF = {
@@ -41,6 +40,7 @@ INIT_CONF = {
                     "kms_ak": None,
                     "kms_secret": None,
                     "key_id": None,
+                    "ram_role_name": None,
                     "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
             }
@@ -158,7 +158,7 @@ def add(args):
             "namespaces": {}
         }
         print(
-                "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(args.tls, "yellow")))
+            "Adding a new endpoint: %s, using TLS is %s.\n" % (_colored(e, "yellow"), _colored(args.tls, "yellow")))
     else:
         endpoint = config["endpoints"][e]
         if args.kms and not args.region_id and not endpoint.get("region_id"):
@@ -174,7 +174,7 @@ def add(args):
             if endpoint.get("region_id") != args.region_id:
                 endpoint["region_id"] = args.region_id
                 print("Region ID of %s has changed to %s.\n" % (
-                _colored(e, "yellow"), _colored(args.region_id, "yellow")))
+                    _colored(e, "yellow"), _colored(args.region_id, "yellow")))
 
     if ns in config["endpoints"][e]["namespaces"]:
         namespace = config["endpoints"][e]["namespaces"][ns]
@@ -190,15 +190,19 @@ def add(args):
             namespace["kms_secret"] = args.kms_secret
         if args.key_id is not None:
             namespace["key_id"] = args.key_id
+        if args.ram_role_name is not None:
+            namespace["ram_role_name"] = args.ram_role_name
         if args.kms:
             if not namespace.get("kms_ak"):
-                if not namespace.get("ak"):
-                    print(_colored("AccessKey", "red") + ' must be specified to use KMS.')
+                if not namespace.get("ak") and not namespace["ram_role_name"]:
+                    print(_colored("AccessKey", "red") + ' or ' + _colored("RAM role name", "red")
+                          + ' must be specified to use KMS.')
                     sys.exit(1)
                 namespace["kms_ak"] = namespace.get("ak")
-            if not namespace.get("kms_secret"):
+            if not namespace.get("kms_secret") and not namespace["ram_role_name"]:
                 if not namespace.get("sk"):
-                    print(_colored("SecretKey", "red") + ' must be specified to use KMS.')
+                    print(_colored("SecretKey", "red") + ' or ' + _colored("RAM role name", "red")
+                          + ' must be specified to use KMS.')
                     sys.exit(1)
                 namespace["kms_secret"] = namespace.get("sk")
         namespace["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -207,23 +211,25 @@ def add(args):
     else:
         namespace = {"ak": args.ak, "sk": args.sk, "alias": alias, "is_current": False,
                      "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                     "kms_ak": None, "kms_secret": None, "key_id": None}
+                     "kms_ak": None, "kms_secret": None, "key_id": None, "ram_role_name": args.ram_role_name}
         if args.kms:
             kms_ak = args.kms_ak or args.ak
-            if not kms_ak:
-                print(_colored("AccessKey", "red") + ' must be specified to use KMS.')
+            if not kms_ak and not args.ram_role_name:
+                print(_colored("AccessKey", "red") + ' or ' + _colored("RAM role name", "red")
+                      + ' must be specified to use KMS.')
                 sys.exit(1)
             kms_secret = args.kms_secret or args.sk
-            if not kms_secret:
-                print(_colored("SecretKey", "red") + ' must be specified to use KMS.')
+            if not kms_secret and not args.ram_role_name:
+                print(_colored("SecretKey", "red") + ' or ' + _colored("RAM role name", "red")
+                      + ' must be specified to use KMS.')
                 sys.exit(1)
             namespace["kms_ak"] = kms_ak
             namespace["kms_secret"] = kms_secret
             namespace["key_id"] = args.key_id
         config["endpoints"][e]["namespaces"][ns] = namespace
         print(
-                "Add new namespace %s(%s) to %s.\n" %
-                (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
+            "Add new namespace %s(%s) to %s.\n" %
+            (_colored(ns, "green"), _colored(alias, "green"), _colored(e, "yellow")))
 
     write_config(config)
 
@@ -231,7 +237,8 @@ def add(args):
         print("Try to access the namespace...")
         c = ACMClient(endpoint=e, namespace=(None if ns == "[default]" else ns),
                       ak=config["endpoints"][e]["namespaces"][ns]["ak"],
-                      sk=config["endpoints"][e]["namespaces"][ns]["sk"])
+                      sk=config["endpoints"][e]["namespaces"][ns]["sk"],
+                      ram_role_name=config["endpoints"][e]["namespaces"][ns].get("ram_role_name"))
         if config["endpoints"][e]["tls"]:
             c.set_options(tls_enabled=True)
         c.list(1, 1)
@@ -292,7 +299,8 @@ def _process_namespace(args):
 
 def list_conf(args):
     e, ep, n, ns = _process_namespace(args)
-    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"],
+                  ram_role_name=ns.get("ram_role_name"))
     if ep["tls"]:
         c.set_options(tls_enabled=True)
 
@@ -392,6 +400,7 @@ def current(args):
     ns = config["endpoints"][e]["namespaces"][n]
 
     print("\tAlias:\t\t%s" % _colored(ns["alias"], "green"))
+    print("\tRAM role name:\t%s" % ns.get("ram_role_name"))
     print("\tAccessKey:\t%s" % ns["ak"])
     print("\tSecretKey:\t%s" % ns["sk"])
     if config["endpoints"][e].get("kms_enabled"):
@@ -643,7 +652,8 @@ def import_to_server(args):
 
 
 def _get_client(e, ep, n, ns):
-    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"])
+    c = ACMClient(endpoint=e, namespace=(None if n == "[default]" else n), ak=ns["ak"], sk=ns["sk"],
+                  ram_role_name=ns.get("ram_role_name"))
     if ep.get("kms_enabled"):
         c.set_options(kms_enabled=True, kms_ak=ns.get("kms_ak"), kms_secret=ns.get("kms_secret"),
                       region_id=ep.get("region_id"), key_id=ns.get("key_id"))
@@ -665,18 +675,21 @@ def arg_parse():
                                               "-s 'GLff***xcao=' -a 654b43******e9750 -n foo")
     parser_add.add_argument("namespace", default=None, help='use "endpoint:namespace_id" to locate a namespace, '
                                                             'if endpoint is missing, "acm.aliyun.com" act as default.')
-    parser_add.add_argument("-a", dest="ak", default=None, help='AccessKey of this namespace.')
-    parser_add.add_argument("-s", dest="sk", help='SecretKey of this namespace.')
+    parser_add.add_argument("-a", dest="ak", default=None, help='AccessKey of this namespace '
+                                                                '(no need if RAM role is set).')
+    parser_add.add_argument("-s", dest="sk", help='SecretKey of this namespace (no need if RAM role is set).')
     parser_add.add_argument("-n", dest="alias", help='alias of the namespace, ":" is not allowed in alias.')
     parser_add.add_argument("--tls", action="store_true", default=False, help="to use TLS connection.")
     parser_add.add_argument("--kms", action="store_true", default=False, help="to use Key Management Service (KMS).")
     parser_add.add_argument("-ka", dest="kms_ak", default=None,
-                            help='AccessKey for KMS, use AccessKey by default, required if KMS is enabled.')
+                            help='AccessKey for KMS, use AccessKey by default (no need if RAM role is set).')
     parser_add.add_argument("-ks", dest="kms_secret", default=None,
-                            help='SecretKey for KMS, use SecretKey by default, required if KMS is enabled.')
+                            help='SecretKey for KMS, use SecretKey by default (no need if RAM role is set).')
     parser_add.add_argument("-k", dest="key_id", default=None, help='Key ID of KMS, required if KMS is enabled.')
     parser_add.add_argument("-r", dest="region_id", default=None,
                             help='Region ID of Alibaba Cloud, required if KMS is enabled.')
+    parser_add.add_argument("-role", dest="ram_role_name", default=None,
+                            help='Alibaba Cloud RAM role name, use this to simplify configuration.')
     parser_add.set_defaults(func=add)
 
     # use

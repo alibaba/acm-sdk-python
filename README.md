@@ -232,6 +232,28 @@ c.publish("cipher-dataId", None, "plainText")
 c.get("cipher-dataId", None)
 ```
 
+## Use RAM
+It is a best practice to use RAM instead of hard coded **AccessKey** and **SecretKey** at client side, because it's much more safe and simple.
+
+Example:
+```python
+ENDPOINT = "acm.aliyun.com"
+NAMESPACE = "9ca*****c1e"
+RAM_ROLE_NAME = "ECS-STS-KMS-ACM"
+REGION_ID = "cn-shanghai"
+KEY_ID="192d****dc"
+
+# use RAM role name for configuration.
+a=acm.ACMClient(ENDPOINT, NAMESPACE, ram_role_name=RAM_ROLE_NAME)
+a.set_options(kms_enabled=True, region_id=REGION_ID, key_id=KEY_ID)
+
+# call API like the same as before.
+a.list_all()
+a.get('cipher-dataId','DEFAULT_GROUP')
+```
+
+
+For more information, refer to this [document](https://help.aliyun.com/document_detail/54579.html?spm=5176.11065259.1996646101.searchclickresult.1f4c11fakqh55j).
 ## Other Resources
 
 * Alibaba Cloud ACM homepage: https://www.aliyun.com/product/acm

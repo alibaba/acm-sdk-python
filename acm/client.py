@@ -10,6 +10,8 @@ import json
 
 from multiprocessing import Process, Manager, Queue, pool
 from threading import RLock, Thread
+from datetime import datetime
+import time
 
 try:
     # python3.6
@@ -34,7 +36,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.3.13"
+VERSION = "0.4.3"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -44,10 +46,41 @@ LINE_SEPARATOR = u'\x01'
 
 kms_available = False
 
+
+def _refresh_session_ak_and_sk_patch(self):
+    try:
+        request_url = "http://100.100.100.200/latest/meta-data/ram/security-credentials/" + self._credential.role_name
+        content = urlopen(request_url).read()
+        response = json.loads(content.decode('utf8'))
+        if response.get("Code") != "Success":
+            logging.error('refresh Ecs sts token err, code is ' + response.get("Code"))
+            return
+        session_ak = response.get("AccessKeyId")
+        session_sk = response.get("AccessKeySecret")
+        token = response.get("SecurityToken")
+        self._session_credential = session_ak, session_sk, token
+        self._expiration = response.get("Expiration")
+    except IOError as e:
+        logging.error('refresh Ecs sts token err', e)
+
+
+def _check_session_credential_patch(self):
+    expiration = self._expiration if isinstance(self._expiration, (float, int))\
+        else time.mktime(datetime.strptime(self._expiration, "%Y-%m-%dT%H:%M:%SZ").timetuple())
+    now = time.mktime(time.gmtime())
+    if expiration - now < 3 * 60:
+        self._refresh_session_ak_and_sk()
+
+
 try:
     from aliyunsdkcore.client import AcsClient
     from aliyunsdkkms.request.v20160120.DecryptRequest import DecryptRequest
     from aliyunsdkkms.request.v20160120.EncryptRequest import EncryptRequest
+    from aliyunsdkcore.auth.credentials import EcsRamRoleCredential
+    from aliyunsdkcore.auth.signers.ecs_ram_role_singer import EcsRamRoleSigner
+
+    EcsRamRoleSigner._check_session_credential = _check_session_credential_patch
+    EcsRamRoleSigner._refresh_session_ak_and_sk = _refresh_session_ak_and_sk_patch
 
     kms_available = True
 except ImportError:
@@ -71,7 +104,7 @@ DEFAULTS = {
 OPTIONS = set(
     ["default_timeout", "tls_enabled", "auth_enabled", "cai_enabled", "pulling_timeout", "pulling_config_size",
      "callback_thread_num", "failover_base", "snapshot_base", "app_name", "kms_enabled", "region_id",
-     "kms_ak", "kms_secret", "key_id", "no_snapshot"])
+     "kms_ak", "kms_secret", "key_id", "no_snapshot", "ram_role_name"])
 
 
 class ACMException(Exception):
@@ -154,11 +187,12 @@ class ACMClient:
             logger.setLevel(logging.DEBUG)
             ACMClient.debug = True
 
-    def __init__(self, endpoint, namespace=None, ak=None, sk=None, ):
+    def __init__(self, endpoint, namespace=None, ak=None, sk=None, ram_role_name=None):
         self.endpoint = endpoint
         self.namespace = namespace or DEFAULT_NAMESPACE or ""
         self.ak = ak
         self.sk = sk
+        self.ram_role_name = ram_role_name
 
         self.server_list = None
         self.server_list_lock = RLock()
@@ -175,7 +209,7 @@ class ACMClient:
 
         self.default_timeout = DEFAULTS["TIMEOUT"]
         self.tls_enabled = False
-        self.auth_enabled = self.ak and self.sk
+        self.auth_enabled = (self.ak and self.sk) or self.ram_role_name
         self.cai_enabled = True
         self.pulling_timeout = DEFAULTS["PULLING_TIMEOUT"]
         self.pulling_config_size = DEFAULTS["PULLING_CONFIG_SIZE"]
@@ -190,6 +224,7 @@ class ACMClient:
         self.kms_secret = self.sk
         self.kms_client = None
         self.no_snapshot = False
+        self.sts_token = None
 
         logger.info("[client-init] endpoint:%s, tenant:%s" % (endpoint, namespace))
 
@@ -755,6 +790,22 @@ class ACMClient:
                             str(e), watcher.callback.__name__))
                     watcher.last_md5 = md5
 
+    def _refresh_sts_token(self):
+        if self.sts_token:
+            if self.sts_token["client_expiration"] - time.mktime(time.gmtime()) > 3 * 60:
+                return
+
+        try:
+            resp = urlopen("http://100.100.100.200/latest/meta-data/ram/security-credentials/" + self.ram_role_name)
+            server_time = time.mktime(datetime.strptime(resp.headers["Date"], "%a, %d %b %Y %H:%M:%S GMT").timetuple())
+            sts_token = json.loads(resp.read().decode("utf8"))
+            expiration = time.mktime(datetime.strptime(sts_token["Expiration"], "%Y-%m-%dT%H:%M:%SZ").timetuple())
+            sts_token["client_expiration"] = expiration - server_time + time.mktime(time.gmtime())
+            self.sts_token = sts_token
+        except Exception as e:
+            logger.error("[refresh-sts-token] get sts token failed, due to %s" % e.message)
+            raise ACMRequestException("Refresh sts token failed.")
+
     def _get_common_headers(self, params, data):
         headers = {
             "Diamond-Client-AppName": self.app_name,
@@ -766,8 +817,17 @@ class ACMClient:
 
         if self.auth_enabled:
             ts = str(int(time.time() * 1000))
+            if self.ram_role_name:
+                self._refresh_sts_token()
+                ak, sk = self.sts_token["AccessKeyId"], self.sts_token["AccessKeySecret"]
+                headers.update({
+                    "Spas-SecurityToken": self.sts_token["SecurityToken"],
+                })
+            else:
+                ak, sk = self.ak, self.sk
+
             headers.update({
-                "Spas-AccessKey": self.ak,
+                "Spas-AccessKey": ak,
                 "timeStamp": ts,
             })
             sign_str = ""
@@ -786,14 +846,18 @@ class ACMClient:
             if sign_str:
                 sign_str += ts
                 headers["Spas-Signature"] = base64.encodebytes(
-                    hmac.new(self.sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip()
+                    hmac.new(sk.encode(), sign_str.encode(), digestmod=hashlib.sha1).digest()).decode().strip()
         return headers
 
     def _prepare_kms(self):
-        if not (self.region_id and self.kms_ak and self.kms_secret):
+        if not ((self.region_id and self.kms_ak and self.kms_secret) or (self.region_id and self.ram_role_name)):
             return False
         if not self.kms_client:
-            self.kms_client = AcsClient(ak=self.kms_ak, secret=self.kms_secret, region_id=self.region_id)
+            if self.ram_role_name:
+                self.kms_client = AcsClient(region_id=self.region_id,
+                                            credential=EcsRamRoleCredential(self.ram_role_name))
+            else:
+                self.kms_client = AcsClient(ak=self.kms_ak, secret=self.kms_secret, region_id=self.region_id)
         return True
 
     def encrypt(self, plain_txt):
