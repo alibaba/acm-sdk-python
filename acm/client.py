@@ -36,7 +36,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.4.3"
+VERSION = "0.4.4"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -588,7 +588,7 @@ class ACMClient:
         for key, puller_info in self.puller_mapping.items():
             if len(puller_info[1]) < self.pulling_config_size:
                 logger.debug("[add-watcher] puller:%s is available, add key:%s" % (puller_info[0], cache_key))
-                puller_info[1].append(key)
+                puller_info[1].append(cache_key)
                 self.puller_mapping[cache_key] = puller_info
                 break
         else:
