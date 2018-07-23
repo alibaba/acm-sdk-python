@@ -3,10 +3,13 @@ import hashlib
 import hmac
 import logging
 import socket
-import time
-import ssl
 import sys
 import json
+
+try:
+    import ssl
+except ImportError:
+    ssl = None
 
 from multiprocessing import Process, Manager, Queue, pool
 from threading import RLock, Thread
@@ -579,7 +582,7 @@ class ACMClient:
 
         if self.puller_mapping is None:
             logger.debug("[add-watcher] pulling should be initialized")
-            self._int_pulling()
+            self._init_pulling()
 
         if cache_key in self.puller_mapping:
             logger.debug("[add-watcher] key:%s is already in pulling" % cache_key)
@@ -750,7 +753,7 @@ class ACMClient:
                 queue.put((cache_key, cache_data.content, cache_data.md5))
 
     @synchronized_with_attr("pulling_lock")
-    def _int_pulling(self):
+    def _init_pulling(self):
         if self.puller_mapping is not None:
             logger.info("[init-pulling] puller is already initialized")
             return
