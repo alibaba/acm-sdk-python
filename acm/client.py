@@ -39,7 +39,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.4.4"
+VERSION = "0.4.6"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -714,12 +714,14 @@ class ACMClient:
                     logger.debug("[do-pulling] new key added: %s" % cache_key)
                     cache_data = CacheData(cache_key, self)
                     cache_pool[cache_key] = cache_data
+                else:
+                    unused_keys.remove(cache_key)
                 if cache_data.is_init:
                     contains_init_key = True
                 data_id, group, namespace = parse_key(cache_key)
                 probe_update_string += WORD_SEPARATOR.join(
                     [data_id, group, cache_data.md5 or "", self.namespace]) + LINE_SEPARATOR
-                unused_keys.remove(cache_key)
+
             for k in unused_keys:
                 logger.debug("[do-pulling] %s is no longer watched, remove from cache" % k)
                 cache_pool.pop(k)
@@ -746,7 +748,7 @@ class ACMClient:
                 cache_data.is_init = False
                 if cache_key in changed_keys:
                     data_id, group, namespace = parse_key(cache_key)
-                    content = self.get(data_id, group)
+                    content = self.get_raw(data_id, group)
                     md5 = hashlib.md5(content.encode("GBK")).hexdigest() if content is not None else None
                     cache_data.md5 = md5
                     cache_data.content = content
@@ -776,11 +778,16 @@ class ACMClient:
                 continue
 
             data_id, group, namespace = parse_key(cache_key)
+            plain_content = content
+            if content and is_encrypted(data_id) and self.kms_enabled:
+                plain_content = self.decrypt(content)
+
             params = {
                 "data_id": data_id,
                 "group": group,
                 "namespace": namespace,
-                "content": content
+                "raw_content": content,
+                "content": plain_content,
             }
             for watcher in wl:
                 if not watcher.last_md5 == md5:
