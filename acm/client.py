@@ -30,7 +30,7 @@ except ImportError:
 
     base64.encodebytes = base64.encodestring
 
-from .commons import synchronized_with_attr, truncate
+from .commons import synchronized_with_attr, truncate, python_version_bellow
 from .params import group_key, parse_key, is_valid
 from .server import get_server_list
 from .files import read_file, save_file, delete_file
@@ -39,7 +39,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.4.6"
+VERSION = "0.4.7"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -669,8 +669,8 @@ class ACMClient:
                 req = Request(url=server_url + url, data=urlencode(data).encode() if data else None,
                               headers=all_headers)
 
-                # for python2.6 compatibility
-                if sys.version_info[0] == 2 and sys.version_info[1] == 6:
+                # for python version compatibility
+                if python_version_bellow("2.7.9"):
                     resp = urlopen(req, timeout=timeout)
                 else:
                     if self.tls_enabled and is_ip_address:
