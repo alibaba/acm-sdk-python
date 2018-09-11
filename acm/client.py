@@ -39,7 +39,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.4.7"
+VERSION = "0.4.8"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -68,7 +68,7 @@ def _refresh_session_ak_and_sk_patch(self):
 
 
 def _check_session_credential_patch(self):
-    expiration = self._expiration if isinstance(self._expiration, (float, int))\
+    expiration = self._expiration if isinstance(self._expiration, (float, int)) \
         else time.mktime(datetime.strptime(self._expiration, "%Y-%m-%dT%H:%M:%SZ").timetuple())
     now = time.mktime(time.gmtime())
     if expiration - now < 3 * 60:
@@ -190,7 +190,7 @@ class ACMClient:
             logger.setLevel(logging.DEBUG)
             ACMClient.debug = True
 
-    def __init__(self, endpoint, namespace=None, ak=None, sk=None, ram_role_name=None):
+    def __init__(self, endpoint, namespace=None, ak=None, sk=None, ram_role_name=None, unit_name=None):
         self.endpoint = endpoint
         self.namespace = namespace or DEFAULT_NAMESPACE or ""
         self.ak = ak
@@ -228,6 +228,7 @@ class ACMClient:
         self.kms_client = None
         self.no_snapshot = False
         self.sts_token = None
+        self.unit_name = unit_name
 
         logger.info("[client-init] endpoint:%s, tenant:%s" % (endpoint, namespace))
 
@@ -255,7 +256,8 @@ class ACMClient:
             try:
                 time.sleep(30)
                 logger.debug("[refresh-server] try to refresh server list")
-                server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled)
+                server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled,
+                                              self.unit_name)
                 logger.debug(
                     "[refresh-server] server_num:%s server_list:%s" % (len(server_list), server_list))
                 if not server_list:
@@ -279,7 +281,8 @@ class ACMClient:
         if self.server_list is None:
             with self.server_list_lock:
                 logger.info("[get-server] server list is null, try to initialize")
-                server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled)
+                server_list = get_server_list(self.endpoint, 443 if self.tls_enabled else 8080, self.cai_enabled,
+                                              self.unit_name)
                 if not server_list:
                     logger.error("[get-server] empty server_list get from %s" % self.endpoint)
                     return None
