@@ -39,7 +39,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.4.8"
+VERSION = "0.4.9"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -743,9 +743,11 @@ class ACMClient:
                 changed_keys = [group_key(*i) for i in parse_pulling_result(resp.read())]
                 logger.debug("[do-pulling] following keys are changed from server %s" % truncate(str(changed_keys)))
             except ACMException as e:
-                logger.error("[do-pulling] acm exception: %s" % str(e))
+                logger.error("[do-pulling] acm exception: %s, waiting for recovery" % str(e))
+                time.sleep(1)
             except Exception as e:
-                logger.exception("[do-pulling] exception %s occur, return empty list" % str(e))
+                logger.exception("[do-pulling] exception %s occur, return empty list, waiting for recovery" % str(e))
+                time.sleep(1)
 
             for cache_key, cache_data in cache_pool.items():
                 cache_data.is_init = False
