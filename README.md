@@ -172,8 +172,7 @@ Publish one data item to ACM.
 * Content can not be set to None, if there is need to delete config item, use function **remove** instead.
 
 ### Remove Config
->`ACMClient.remove_watcher(data_id, group, cb, remove_all)`
-
+>`ACMClient.remove(data_id, group, timeout)`
 * `param` *data_id* Data id.
 * `param` *group* Group, use "DEFAULT_GROUP" if no group specified.
 * `param` *timeout* Timeout for requesting server in seconds.
