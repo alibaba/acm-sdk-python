@@ -39,7 +39,7 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 DEBUG = False
-VERSION = "0.4.9"
+VERSION = "0.4.10"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
