@@ -80,7 +80,7 @@ try:
     from aliyunsdkkms.request.v20160120.DecryptRequest import DecryptRequest
     from aliyunsdkkms.request.v20160120.EncryptRequest import EncryptRequest
     from aliyunsdkcore.auth.credentials import EcsRamRoleCredential
-    from aliyunsdkcore.auth.signers.ecs_ram_role_singer import EcsRamRoleSigner
+    from aliyunsdkcore.auth.signers.ecs_ram_role_signer import EcsRamRoleSigner
 
     EcsRamRoleSigner._check_session_credential = _check_session_credential_patch
     EcsRamRoleSigner._refresh_session_ak_and_sk = _refresh_session_ak_and_sk_patch
