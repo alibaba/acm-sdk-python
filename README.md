@@ -23,6 +23,7 @@ Python SDK for ACM.
 4. Python 3.4
 5. Python 3.5
 6. Python 3.6
+7. Python 3.7
 
 ### Supported ACM version
 1. ACM 1.0
