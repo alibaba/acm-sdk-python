@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import logging
 import socket
-import sys
+import os
 import json
 
 try:
@@ -25,7 +25,7 @@ try:
 except ImportError:
     # python2.7
     import httplib as HTTPStatus
-    from urllib2 import Request, urlopen, HTTPError, URLError
+    from urllib import Request, urlopen, HTTPError, URLError
     from urllib import urlencode, unquote_plus
 
     base64.encodebytes = base64.encodestring
@@ -97,8 +97,8 @@ DEFAULTS = {
     "PULLING_TIMEOUT": 30,  # in seconds
     "PULLING_CONFIG_SIZE": 3000,
     "CALLBACK_THREAD_NUM": 10,
-    "FAILOVER_BASE": "acm-data/data",
-    "SNAPSHOT_BASE": "acm-data/snapshot",
+    "FAILOVER_BASE": os.path.join("acm-data", "data"),
+    "SNAPSHOT_BASE": os.path.join("acm-data", "snapshot"),
     "KMS_ENABLED": False,
     "REGION_ID": "",
     "KEY_ID": "",
