@@ -62,14 +62,14 @@ def _refresh_session_ak_and_sk_patch(self):
         session_sk = response.get("AccessKeySecret")
         token = response.get("SecurityToken")
         self._session_credential = session_ak, session_sk, token
-        self._expiration = response.get("Expiration")
+        self._SESSION_PERIOD = response.get("Expiration")
     except IOError as e:
         logging.error('refresh Ecs sts token err', e)
 
 
 def _check_session_credential_patch(self):
-    expiration = self._expiration if isinstance(self._expiration, (float, int)) \
-        else time.mktime(datetime.strptime(self._expiration, "%Y-%m-%dT%H:%M:%SZ").timetuple())
+    expiration = self._SESSION_PERIOD if isinstance(self._SESSION_PERIOD, (float, int)) \
+        else time.mktime(datetime.strptime(self._SESSION_PERIOD, "%Y-%m-%dT%H:%M:%SZ").timetuple())
     now = time.mktime(time.gmtime())
     if expiration - now < 3 * 60:
         self._refresh_session_ak_and_sk()
