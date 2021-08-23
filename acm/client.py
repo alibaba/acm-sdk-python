@@ -68,6 +68,9 @@ def _refresh_session_ak_and_sk_patch(self):
 
 
 def _check_session_credential_patch(self):
+    if not hasattr(self, '_expiration'):
+        self._refresh_session_ak_and_sk()
+        return
     expiration = self._expiration if isinstance(self._expiration, (float, int)) \
         else time.mktime(datetime.strptime(self._expiration, "%Y-%m-%dT%H:%M:%SZ").timetuple())
     now = time.mktime(time.gmtime())
