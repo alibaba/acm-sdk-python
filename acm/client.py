@@ -339,7 +339,7 @@ class ACMClient:
             logger.exception("[remove] exception %s occur" % str(e))
             raise
 
-    def publish(self, data_id, group, content, timeout=None):
+    def publish(self, data_id, group, content, timeout=None, app_name=None):
         """ Publish one data item to ACM.
 
         If the data key is not exist, create one first.
@@ -350,6 +350,7 @@ class ACMClient:
         :param group: group, use "DEFAULT_GROUP" if no group specified.
         :param content: content of the data item.
         :param timeout: timeout for requesting server in seconds.
+        :param app_name: specify the name of the application to which this configuration belongs
         :return: True if success or an exception will be raised.
         """
         if content is None:
@@ -371,6 +372,9 @@ class ACMClient:
         }
         if self.namespace:
             params["tenant"] = self.namespace
+            
+        if app_name:
+            params["appName"] = app_name
 
         try:
             resp = self._do_sync_req("/diamond-server/basestone.do?method=syncUpdateAll", None, None, params,
