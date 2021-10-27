@@ -210,7 +210,7 @@ class ACMClient:
         self.pulling_lock = RLock()
         self.puller_mapping = None
         self.notify_queue = None
-        self.callback_tread_pool = None
+        self.callback_thread_pool = None
         self.process_mgr = None
 
         self.default_timeout = DEFAULTS["TIMEOUT"]
@@ -219,7 +219,7 @@ class ACMClient:
         self.cai_enabled = True
         self.pulling_timeout = DEFAULTS["PULLING_TIMEOUT"]
         self.pulling_config_size = DEFAULTS["PULLING_CONFIG_SIZE"]
-        self.callback_tread_num = DEFAULTS["CALLBACK_THREAD_NUM"]
+        self.callback_thread_num = DEFAULTS["CALLBACK_THREAD_NUM"]
         self.failover_base = DEFAULTS["FAILOVER_BASE"]
         self.snapshot_base = DEFAULTS["SNAPSHOT_BASE"]
         self.app_name = DEFAULTS["APP_NAME"]
@@ -773,7 +773,7 @@ class ACMClient:
             return
         self.puller_mapping = dict()
         self.notify_queue = Queue()
-        self.callback_tread_pool = pool.ThreadPool(self.callback_tread_num)
+        self.callback_thread_pool = pool.ThreadPool(self.callback_thread_num)
         self.process_mgr = Manager()
         t = Thread(target=self._process_polling_result)
         t.setDaemon(True)
@@ -806,7 +806,7 @@ class ACMClient:
                     logger.debug(
                         "[process-polling-result] md5 changed since last call, calling %s" % watcher.callback.__name__)
                     try:
-                        self.callback_tread_pool.apply(watcher.callback, (params,))
+                        self.callback_thread_pool.apply(watcher.callback, (params,))
                     except Exception as e:
                         logger.exception("[process-polling-result] exception %s occur while calling %s " % (
                             str(e), watcher.callback.__name__))
