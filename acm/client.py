@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import logging
 import socket
-import sys
+import os
 import json
 
 try:
@@ -100,8 +100,8 @@ DEFAULTS = {
     "PULLING_TIMEOUT": 30,  # in seconds
     "PULLING_CONFIG_SIZE": 3000,
     "CALLBACK_THREAD_NUM": 10,
-    "FAILOVER_BASE": "acm-data/data",
-    "SNAPSHOT_BASE": "acm-data/snapshot",
+    "FAILOVER_BASE": os.path.join("acm-data", "data"),
+    "SNAPSHOT_BASE": os.path.join("acm-data", "snapshot"),
     "KMS_ENABLED": False,
     "REGION_ID": "",
     "KEY_ID": "",
