@@ -11,7 +11,8 @@ try:
 except ImportError:
     ssl = None
 
-from multiprocessing import Process, Manager, Queue, pool
+from multiprocessing import pool
+from queue import Queue
 from threading import RLock, Thread
 from datetime import datetime
 import time
@@ -606,9 +607,9 @@ class ACMClient:
                 break
         else:
             logger.debug("[add-watcher] no puller available, new one and add key:%s" % cache_key)
-            key_list = self.process_mgr.list()
+            key_list = self.process_mgr
             key_list.append(cache_key)
-            puller = Process(target=self._do_pulling, args=(key_list, self.notify_queue))
+            puller = Thread(target=self._do_pulling, args=(key_list, self.notify_queue))
             puller.daemon = True
             puller.start()
             self.puller_mapping[cache_key] = (puller, key_list)
@@ -774,7 +775,7 @@ class ACMClient:
         self.puller_mapping = dict()
         self.notify_queue = Queue()
         self.callback_tread_pool = pool.ThreadPool(self.callback_tread_num)
-        self.process_mgr = Manager()
+        self.process_mgr = []
         t = Thread(target=self._process_polling_result)
         t.setDaemon(True)
         t.start()
